@@ -18,58 +18,62 @@ export class Agent
 			await send(payload, "error", session: sid, error: "no agent specified")
 			return
 
-		log "invoking {name} (session {sid}) in {dir}"
+		try
+			log "invoking {name} (session {sid}) in {dir}"
 
-		# ensure session exists (agent name before subcommand)
-		const ensure = await exec([
-			"acpx", name, "sessions", "ensure", "--name", sid
-		], cwd: dir)
-		if ensure.exitCode != 0
-			log "ensure session: {ensure.stderr.slice(0, 200)}"
+			# ensure session exists (agent name before subcommand)
+			const ensure = await exec([
+				"acpx", name, "sessions", "ensure", "--name", sid
+			], cwd: dir)
+			if ensure.exitCode != 0
+				log "ensure session: {ensure.stderr.slice(0, 200)}"
 
-		# run prompt via acpx with NDJSON output
-		const args = ["acpx", "--format", "json"]
-		if payload.model
-			args.push("--model", payload.model)
-		args.push(name, "-s", sid, payload.prompt)
+			# run prompt via acpx with NDJSON output
+			const args = ["acpx", "--format", "json"]
+			if payload.model
+				args.push("--model", payload.model)
+			args.push(name, "-s", sid, payload.prompt)
 
-		log "cmd: {args.join(' ')}"
+			log "cmd: {args.join(' ')}"
 
-		const proc = spawn(args[0], args.slice(1), {
-			cwd: dir
-			stdio: ['pipe', 'pipe', 'pipe']
-		})
+			const proc = spawn(args[0], args.slice(1), {
+				cwd: dir
+				stdio: ['pipe', 'pipe', 'pipe']
+			})
 
-		let buf = ""
-		let partial = ""
-		let stderr = ""
+			let buf = ""
+			let partial = ""
+			let stderr = ""
 
-		proc.stdout.on('data', do(chunk)
-			partial += chunk.toString!
-			const lines = partial.split("\n")
-			partial = lines.pop! or ""
-			for line in lines
-				continue unless line.trim!
-				try
-					const event = JSON.parse(line)
-					buf += extract(event)
-					send(payload, "output", session: sid, text: line)
-				catch
-					buf += line
-		)
+			proc.stdout.on('data', do(chunk)
+				partial += chunk.toString!
+				const lines = partial.split("\n")
+				partial = lines.pop! or ""
+				for line in lines
+					continue unless line.trim!
+					try
+						const event = JSON.parse(line)
+						buf += extract(event)
+						send(payload, "output", session: sid, text: line)
+					catch
+						buf += line
+			)
 
-		proc.stderr.on('data', do(chunk) stderr += chunk.toString!)
+			proc.stderr.on('data', do(chunk) stderr += chunk.toString!)
 
-		const code = await new Promise do(ok)
-			proc.on('close', do(c) ok(c))
+			const code = await new Promise do(ok)
+				proc.on('close', do(c) ok(c))
 
-		if code != 0
-			err "acpx exited {code}: {stderr.slice(0, 300)}"
-			await send(payload, "error", session: sid, error: stderr.slice(0, 500))
-		else
-			const changed = dir ? await delta(dir) : []
-			await send(payload, "complete", session: sid, summary: buf, changed: changed)
-			log "session {sid} complete ({buf.length} chars)"
+			if code != 0
+				err "acpx exited {code}: {stderr.slice(0, 300)}"
+				await send(payload, "error", session: sid, error: stderr.slice(0, 500))
+			else
+				const changed = dir ? await delta(dir) : []
+				await send(payload, "complete", session: sid, summary: buf, changed: changed)
+				log "session {sid} complete ({buf.length} chars)"
+		catch e
+			err "invoke crashed: {e.message}"
+			await send(payload, "error", session: sid, error: "connector error: {e.message}")
 
 	def extract event
 		# extract readable text from JSON-RPC event
@@ -85,20 +89,30 @@ export class Agent
 			return event.content
 		""
 
-	def send payload, action, data
+	def send payload, action, data, retries = 2
 		const cb = payload.callback
 		return unless cb
-		try
-			await globalThis.fetch "{cb}/agents/channel",
-				method: "POST"
-				headers: { "content-type": "application/json" }
-				body: JSON.stringify
-					v: VERSION
-					action: action
-					token: payload.token or ""
-					payload: data
-		catch e
-			err "callback ({action}): {e.message}"
+		const body = JSON.stringify
+			v: VERSION
+			action: action
+			token: payload.token or ""
+			payload: data
+		let attempt = 0
+		while attempt <= retries
+			try
+				const res = await globalThis.fetch "{cb}/agents/channel",
+					method: "POST"
+					headers: { "content-type": "application/json" }
+					body: body
+				unless res.ok
+					const txt = await res.text!
+					err "callback ({action}): HTTP {res.status} — {txt.slice(0, 200)}"
+				return
+			catch e
+				attempt++
+				err "callback ({action}): {e.message} (attempt {attempt}/{retries + 1})"
+				if attempt <= retries
+					await new Promise do(ok) setTimeout(ok, 1000 * attempt)
 
 	def delta dir
 		try
