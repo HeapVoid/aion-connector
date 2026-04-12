@@ -1,0 +1,13 @@
+{
+  "port": 7777,
+  "projects": {
+    "YOUR_PROJECT_ID": {
+      "token": "your-secret-token",
+      "dir": "./projects/my-project",
+      "agents": {
+        "qwen": { "description": "Qwen 3 Coder" },
+        "pi": { "description": "Pi Assistant" }
+      }
+    }
+  }
+}

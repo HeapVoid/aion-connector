@@ -1,0 +1,17 @@
+{
+	"name": "aion-connector",
+	"version": "0.1.7",
+	"description": "Universal connector for remote AI agents in AION",
+	"bin": {
+		"aion-connector": "./src/boot.js"
+	},
+	"dependencies": {
+		"imba": "latest",
+		"bimba-cli": "latest",
+		"acpx": "latest",
+		"node-pty": "^1.0.0"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	}
+}
