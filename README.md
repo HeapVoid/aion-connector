@@ -2,7 +2,7 @@
 
 Universal connector that turns any VPS into an AI agent server for [AION](https://aion.ifastbet.com) — the collaborative platform for teams and AI.
 
-The connector runs on your server, listens for tasks from AION, and executes them via [acpx](https://github.com/nicobailey/acpx) — a universal CLI client for the Agent Client Protocol (ACP). This means **one connector supports 17+ AI coding agents** through a single interface.
+The connector runs on your server, listens for tasks from AION, and executes them via [acpx](https://github.com/nicobailey/acpx) — a universal CLI client for the Agent Client Protocol (ACP). This means **one connector supports 17+ AI coding agents** through a single interface. It also provides a **WebSocket terminal** (via node-pty) for direct shell access from AION's UI.
 
 ## Supported Agents
 
@@ -31,16 +31,17 @@ Any agent that supports ACP will work automatically.
 
 ### 1. Install
 
-Your server needs [Bun](https://bun.sh) (runtime) and the agent you want to use.
+Your server needs [Node.js](https://nodejs.org) v18+ and the agent(s) you want to use.
 
 ```bash
-# Install Bun
-curl -fsSL https://bun.sh/install | bash
+# Install Node.js (Ubuntu/Debian)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
+sudo apt-get install -y nodejs
 
-# Make bun available system-wide
-ln -sf ~/.bun/bin/bun /usr/local/bin/bun
+# Build tools for node-pty native module
+sudo apt-get install -y build-essential python3
 
-# Install connector
+# Install connector globally
 npm install -g aion-connector
 
 # Install your agent (example: Pi)
@@ -50,44 +51,46 @@ npm install -g @mariozechner/pi-coding-agent
 Other agent install examples:
 
 ```bash
-# Claude Code
-npm install -g @anthropic-ai/claude-code
-
-# OpenCode
-npm install -g opencode
+npm install -g @anthropic-ai/claude-code   # Claude Code
+npm install -g opencode                      # OpenCode
 ```
 
-### 2. Get your token
+> **Note:** `node-pty` (used for the WebSocket terminal) compiles from source on Linux via node-gyp during `npm install`. This happens automatically — you just need `build-essential` and `python3`.
 
-In AION, go to your project settings and create a new agent. You'll get:
-- **Agent name** — the agent type to use (e.g. `claude`, `pi`, `codex`)
-- **VPS Token** — authentication token for your connector
-- **VPS Host** — set this to `http://YOUR_SERVER_IP:7777`
+### 2. Configure
+
+Create a config file `aion.config.json`:
+
+```json
+{
+  "port": 7777,
+  "projects": {
+    "YOUR_PROJECT_ID": {
+      "token": "your-secret-token",
+      "dir": "./projects/my-project",
+      "agents": {
+        "pi": { "description": "Pi Assistant" },
+        "claude": { "description": "Claude Code" }
+      }
+    }
+  }
+}
+```
+
+**Where to get these values:**
+- **Project ID** — visible in your AION project URL or settings
+- **Token** — create a server in AION project settings, copy the generated token
+- **Agents** — list the agent CLIs you've installed on this server
 
 ### 3. Run
 
 ```bash
-aion-connector --token YOUR_TOKEN --agent pi
+aion-connector ./aion.config.json
 ```
 
-That's it. The connector starts an HTTP server on port 7777 and waits for tasks from AION.
-
-### Options
-
-```
---agent NAME     Agent to use: claude, codex, pi, opencode, gemini...
---token TOKEN    Auth token from AION agent settings
---port PORT      HTTP server port (default: 7777)
---host HOST      Bind address (default: 0.0.0.0)
---dir PATH       Directory for cloned repositories (default: ./repos)
---no-autoupdate  Disable auto-update
-```
+The connector starts an HTTP + WebSocket server on port 7777 and waits for tasks from AION.
 
 ## Production Setup (systemd)
-
-For production, run the connector as a systemd service so it starts on boot and restarts on crashes.
-
-### Create the service file
 
 ```bash
 sudo cat > /etc/systemd/system/aion-connector.service << EOF
@@ -97,100 +100,113 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/aion-connector --token YOUR_TOKEN --agent pi --dir /root/repos
+ExecStart=/usr/bin/node /usr/lib/node_modules/aion-connector/dist/cli.js /root/aion-connector/aion.config.json
 Restart=always
 RestartSec=5
 Environment=HOME=/root
+WorkingDirectory=/root/aion-connector
 
 [Install]
 WantedBy=multi-user.target
 EOF
-```
 
-### Enable and start
-
-```bash
-# Create repos directory
-mkdir -p /root/repos
-
-# Reload systemd, enable on boot, start now
 sudo systemctl daemon-reload
 sudo systemctl enable aion-connector
 sudo systemctl start aion-connector
 ```
 
-### Manage the service
-
 ```bash
-# Check status
-sudo systemctl status aion-connector
-
-# View live logs
-sudo journalctl -u aion-connector -f
-
-# Restart after config change
-sudo systemctl restart aion-connector
-
-# Stop
-sudo systemctl stop aion-connector
+sudo systemctl status aion-connector        # Check status
+sudo journalctl -u aion-connector -f        # View live logs
+sudo systemctl restart aion-connector       # Restart
 ```
 
-## Running Multiple Agents
+## Config Reference
 
-You can run multiple agents on the same server — just use different ports and service names.
-
-```bash
-# Agent 1: Pi on port 7777
-aion-connector --token TOKEN_1 --agent pi --port 7777
-
-# Agent 2: Claude on port 7778
-aion-connector --token TOKEN_2 --agent claude --port 7778
+```json
+{
+  "port": 7777,
+  "host": "0.0.0.0",
+  "projects": {
+    "project-id": {
+      "token": "secret-token",
+      "dir": "/path/to/workspace",
+      "agents": {
+        "agent-name": { "description": "Human-readable name" }
+      }
+    }
+  }
+}
 ```
 
-For systemd, create separate service files:
+| Field | Default | Description |
+|---|---|---|
+| `port` | `7777` | HTTP/WS server port |
+| `host` | `0.0.0.0` | Bind address |
+| `projects` | — | Map of project ID → project config |
+| `projects.*.token` | — | Auth token (must match AION server settings) |
+| `projects.*.dir` | — | Workspace directory for cloned repos |
+| `projects.*.agents` | — | Map of agent CLI name → metadata |
 
-```bash
-# /etc/systemd/system/aion-connector-pi.service    → port 7777
-# /etc/systemd/system/aion-connector-claude.service → port 7778
+### Multiple projects
+
+One connector can serve multiple AION projects:
+
+```json
+{
+  "port": 7777,
+  "projects": {
+    "project-a": {
+      "token": "token-a",
+      "dir": "/root/repos/project-a",
+      "agents": { "pi": { "description": "Pi" } }
+    },
+    "project-b": {
+      "token": "token-b",
+      "dir": "/root/repos/project-b",
+      "agents": { "claude": { "description": "Claude" } }
+    }
+  }
+}
 ```
-
-In AION, set each agent's VPS Host to the corresponding port (`http://YOUR_IP:7777`, `http://YOUR_IP:7778`).
 
 ## How It Works
 
 ```
 AION Platform                          Your VPS
 ┌──────────────┐                    ┌──────────────────┐
-│              │   POST /channel    │                  │
+│              │   POST (tasks)     │                  │
 │    AION      │ ────────────────>  │  aion-connector  │
 │   server     │                    │                  │
-│              │   POST /agents/    │    ┌──────────┐  │
+│              │   POST (output)    │    ┌──────────┐  │
 │              │ <────────────────  │    │   acpx   │  │
-│              │    channel         │    │  (agent) │  │
+│              │                    │    │  (agent) │  │
+│              │   WebSocket        │    └──────────┘  │
+│              │ <═══════════════>  │    ┌──────────┐  │
+│              │   (terminal)       │    │ node-pty │  │
+│              │                    │    │  (shell) │  │
 └──────────────┘                    │    └──────────┘  │
-                                    │    ┌──────────┐  │
-                                    │    │   repos   │  │
-                                    │    │ (cloned)  │  │
-                                    │    └──────────┘  │
                                     └──────────────────┘
 ```
 
 1. A user types `/pi fix the login bug` in an AION chat
-2. AION sends the prompt to your connector via Channel Protocol v1
+2. AION sends the prompt to your connector via HTTP
 3. The connector syncs repositories (clones or pulls)
 4. The connector runs `acpx pi "fix the login bug"` in the repo directory
 5. Output streams back to AION in real time
-6. When the agent finishes, a summary and list of changed files are sent back
+6. When the agent finishes, a summary and changed files are sent back
+
+The connector also accepts WebSocket connections for an interactive terminal — AION's UI opens a shell session directly on your server via node-pty.
 
 ### Channel Protocol v1
 
-The connector communicates with AION through a simple JSON protocol. Every message is a `POST` request with this structure:
+Every HTTP message is a `POST` with this structure:
 
 ```json
 {
   "v": 1,
   "action": "invoke",
-  "token": "your-vps-token",
+  "token": "your-token",
   "payload": { ... }
 }
 ```
@@ -199,14 +215,22 @@ The connector communicates with AION through a simple JSON protocol. Every messa
 
 | Action | Description |
 |---|---|
-| `ping` | Health check. Returns `{"ok": true, "v": 1}` |
+| `ping` | Health check — returns `{"ok": true, "v": 1}` |
 | `invoke` | Run agent with a prompt |
+| `agents` | List available agents for the project |
 | `repos.sync` | Clone or pull repositories |
 | `files.tree` | List files in a workspace (git ls-files) |
 | `files.read` | Read a file's content |
 | `git.status` | Get `git status --porcelain` |
 | `git.diff` | Get `git diff` output |
 | `workspaces` | List cloned repositories |
+| `terminal.spawn` | Start an HTTP-based terminal session |
+| `terminal.input` | Send input to terminal session |
+| `terminal.output` | Read terminal output |
+| `terminal.resize` | Resize terminal |
+| `terminal.close` | Close terminal session |
+
+**WebSocket endpoint:** `ws://HOST:PORT/ws?token=TOKEN` — opens an interactive PTY terminal with full color support.
 
 **Outbound actions** (Connector → AION):
 
@@ -221,62 +245,49 @@ The connector communicates with AION through a simple JSON protocol. Every messa
 ### Connector won't start — port in use
 
 ```bash
-# Find what's using the port
 ss -tlnp | grep 7777
-
-# Kill it
 fuser -k 7777/tcp
 ```
 
 ### Agent command not found
 
-`acpx` needs the agent CLI to be installed globally. Check:
+`acpx` needs the agent CLI installed globally:
 
 ```bash
-# Is acpx installed?
-acpx --version
-
-# Does it see your agent?
-acpx pi --help    # or: acpx claude --help
+acpx --version          # Is acpx installed?
+acpx pi --help          # Does it see your agent?
 ```
 
-If the agent isn't found, install it:
+### node-pty build fails
 
 ```bash
-npm install -g @mariozechner/pi-coding-agent   # Pi
-npm install -g @anthropic-ai/claude-code        # Claude
+sudo apt-get install -y build-essential python3
+npm rebuild node-pty
 ```
 
 ### Connector responds to ping but agent fails
 
-Check the logs:
-
 ```bash
-# systemd logs
 journalctl -u aion-connector -n 50 --no-pager
-
-# or if running manually, check stderr output
 ```
 
 Common causes:
-- **Missing API key** — most agents need an API key. Set it as an environment variable before starting (e.g. `ANTHROPIC_API_KEY` for Claude, `PI_API_KEY` for Pi)
-- **Agent not installed** — see above
-- **Repository not cloned** — the connector clones repos automatically when AION sends a `repos.sync` or `invoke` with repos. Check that the `--dir` path is writable
+- **Missing API key** — most agents need an API key env var (e.g. `ANTHROPIC_API_KEY` for Claude)
+- **Agent not installed globally** — `npm install -g <agent-package>`
 
 ### Can't reach connector from AION
 
-Make sure:
-1. The port is open in your firewall: `ufw allow 7777/tcp`
-2. The VPS Host in AION matches your server: `http://YOUR_IP:7777`
-3. The token in AION matches the `--token` you started with
+1. Open the port in your firewall: `ufw allow 7777/tcp`
+2. Set VPS Host in AION to `http://YOUR_IP:7777`
+3. Token in AION must match the token in your config
 
-Test from your local machine:
+Test:
 
 ```bash
 curl -X POST http://YOUR_IP:7777 \
   -H 'Content-Type: application/json' \
   -d '{"v":1, "action":"ping", "token":"YOUR_TOKEN"}'
-# Should return: {"ok":true,"v":1}
+# → {"ok":true,"v":1}
 ```
 
 ### Updating
@@ -288,16 +299,18 @@ sudo systemctl restart aion-connector
 
 ## Requirements
 
-- [Bun](https://bun.sh) v1.0+
+- [Node.js](https://nodejs.org) v18+
 - Linux VPS (Ubuntu 22.04+ recommended)
+- `build-essential` + `python3` (for node-pty compilation)
 - At least one AI agent CLI installed globally
 
-## Security Notes
+## Security
 
-- The connector only accepts POST requests with a valid token
+- Only accepts requests with a valid project token
 - Sensitive files (`.env`, `.git`, `.pem`, `.key`, `credentials`, `.secret`) are blocked from being read
 - Path traversal attempts are rejected
-- Repositories are cloned into an isolated directory
+- Repositories are cloned into isolated project directories
+- WebSocket terminal requires valid token authentication
 
 ## License
 
