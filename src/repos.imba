@@ -1,5 +1,5 @@
 import {join} from 'path'
-import {log, error} from './utils.imba'
+import {log, error, exec} from './utils.imba'
 import {existsSync} from 'fs'
 
 export class Repos
@@ -22,16 +22,13 @@ export class Repos
 		const url = inject(repo.url, repo.token)
 		const branch = repo.branch or "main"
 		log "cloning {repo.name} ({branch})"
-		const proc = Bun.spawn(["git", "clone", "-b", branch, url, dest], stdout: "pipe", stderr: "pipe")
-		await proc.exited
-		if proc.exitCode != 0
-			const err = await new Response(proc.stderr).text!
-			error "clone failed: {err}"
+		const result = await exec(["git", "clone", "-b", branch, url, dest])
+		if result.exitCode != 0
+			error "clone failed: {result.stderr}"
 
 	def pull dest, repo = null
 		log "pulling {dest}"
-		const proc = Bun.spawn(["git", "pull"], cwd: dest, stdout: "pipe", stderr: "pipe")
-		await proc.exited
+		await exec(["git", "pull"], cwd: dest)
 
 	def inject url, token
 		return url unless token
@@ -51,7 +48,5 @@ export class Repos
 		Object.entries(#map).map do([name, path]) { name, path }
 
 	def head dir
-		const proc = Bun.spawn(["git", "rev-parse", "HEAD"], cwd: dir, stdout: "pipe")
-		const out = await new Response(proc.stdout).text!
-		await proc.exited
-		out.trim!
+		const result = await exec(["git", "rev-parse", "HEAD"], cwd: dir)
+		result.stdout.trim!

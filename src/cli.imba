@@ -1,7 +1,6 @@
-#!/usr/bin/env bun
 import {Connector} from './connector.imba'
 import {log, error} from './utils.imba'
-import {existsSync} from 'fs'
+import {existsSync, readFileSync} from 'fs'
 
 # Find config file
 const configPath = process.argv[2] or "./aion.config.json"
@@ -29,8 +28,7 @@ unless existsSync(configPath)
 
 let config
 try
-	const file = Bun.file(configPath)
-	config = await file.json!
+	config = JSON.parse(readFileSync(configPath, 'utf8'))
 catch e
 	error "Failed to parse config: {e.message}"
 	process.exit(1)

@@ -1,4 +1,5 @@
 import {resolve} from 'path'
+import {spawn} from 'child_process'
 
 const DENY = [".env", ".git", ".pem", ".key", "credentials", ".secret"]
 
@@ -16,3 +17,15 @@ export def log ...args
 
 export def error ...args
 	console.error("[aion-connector]", ...args)
+
+# Spawn a process, collect stdout/stderr, return {stdout, stderr, exitCode}
+export def exec args, opts = {}
+	new Promise do(ok)
+		const proc = spawn(args[0], args.slice(1), { ...opts, stdio: ['pipe', 'pipe', 'pipe'] })
+		let stdout = ''
+		let stderr = ''
+		proc.stdout.on('data', do(chunk) stdout += chunk.toString!)
+		proc.stderr.on('data', do(chunk) stderr += chunk.toString!)
+		proc.on('close', do(code)
+			ok({ stdout, stderr, exitCode: code })
+		)

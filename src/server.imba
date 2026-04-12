@@ -1,8 +1,10 @@
 import {VERSION} from './protocol.imba'
 import {log} from './utils.imba'
+import {createServer} from 'http'
+import {WebSocketServer} from 'ws'
+import {spawn} from 'child_process'
 
 # Try to load node-pty for proper PTY terminal (colors, job control, readline)
-# Falls back to Bun.spawn pipe if not available
 let pty = null
 try
 	pty = require('node-pty')
@@ -12,129 +14,133 @@ catch
 
 export class Server
 	#connector
-	#server = null
+	#http = null
+	#wss = null
 	#terminals = {}
-	#httpTerminals = {}  # HTTP-based terminal sessions: {id: {proc, buffer, alive}}
+	#httpTerminals = {}
+	#meta = new WeakMap!
 
 	def constructor connector
 		#connector = connector
 
 	def start
 		const srv = this
-		#server = Bun.serve
-			port: #connector.port
-			hostname: #connector.host
-			fetch: do(req) srv.handle(req)
-			websocket:
-				open: do(ws) srv.wsOpen(ws)
-				message: do(ws, msg) srv.wsMessage(ws, msg)
-				close: do(ws) srv.wsClose(ws)
-		log "listening on {#connector.host}:{#connector.port}"
+		#http = createServer(do(req, res) srv.handleHttp(req, res))
+		#wss = new WebSocketServer({ noServer: yes })
+		#http.on('upgrade', do(req, socket, head) srv.handleUpgrade(req, socket, head))
+		#http.listen #connector.port, #connector.host, do
+			log "listening on {#connector.host}:{#connector.port}"
 
 	def stop
-		# Kill all terminals (WS)
 		for own id, t of #terminals
-			t.proc..kill!
+			if t.pty
+				try t.pty.kill!
+			elif t.proc
+				try t.proc.kill!
 		#terminals = {}
-		# Kill all HTTP terminal sessions
 		for own id, s of #httpTerminals
 			try s.proc.kill!
 		#httpTerminals = {}
-		#server..stop!
+		#http..close!
 
-	def handle req
-		# WebSocket upgrade for terminal
-		if req.headers.get("upgrade") == "websocket"
-			return handleUpgrade(req)
+	# --- HTTP ---
 
+	def handleHttp req, res
 		unless req.method == "POST"
-			return respond({ error: "POST only" }, 405)
+			return respond(res, { error: "POST only" }, 405)
+		let body = ''
+		req.on('data', do(chunk) body += chunk)
+		req.on('end', do
+			let msg
+			try
+				msg = JSON.parse(body)
+			catch
+				return respond(res, { error: "invalid json" }, 400)
+			self.route(msg, res)
+		)
 
-		let msg
-		try
-			msg = await req.json!
-		catch
-			return respond({ error: "invalid json" }, 400)
-
+	def route msg, res
 		if msg.v and msg.v > VERSION
-			return respond({ error: "version", min: msg.v }, 400)
+			return respond(res, { error: "version", min: msg.v }, 400)
 
-		# Authenticate token → get project id
 		const pid = #connector.auth(msg.token)
 		unless pid
-			return respond({ error: "unauthorized" }, 403)
+			return respond(res, { error: "unauthorized" }, 403)
 
-		# Verify payload.project matches token's project
 		const p = msg.payload or {}
 		if p.project and p.project != pid
-			return respond({ error: "token/project mismatch" }, 403)
+			return respond(res, { error: "token/project mismatch" }, 403)
 
-		# Inject correct project id
 		p.project = pid
 
 		switch msg.action
 			when "invoke"
 				#connector.invoke(p)
-				return respond({ ok: yes })
+				respond(res, { ok: yes })
 			when "agents"
-				return respond({ agents: #connector.agents(pid) })
+				respond(res, { agents: #connector.agents(pid) })
 			when "repos.sync"
 				const ws = #connector.workspace(pid)
 				if ws
 					await ws.repos.sync(p.repos or [])
-				return respond({ ok: yes })
+				respond(res, { ok: yes })
 			when "files.tree"
 				const files = #connector.filesFor(pid)
-				return respond(files ? await files.tree(p) : { error: "no workspace" })
+				respond(res, files ? await files.tree(p) : { error: "no workspace" })
 			when "files.read"
 				const files = #connector.filesFor(pid)
-				return respond(files ? await files.read(p) : { error: "no workspace" })
+				respond(res, files ? await files.read(p) : { error: "no workspace" })
 			when "git.status"
 				const files = #connector.filesFor(pid)
-				return respond(files ? await files.status(p) : { error: "no workspace" })
+				respond(res, files ? await files.status(p) : { error: "no workspace" })
 			when "git.diff"
 				const files = #connector.filesFor(pid)
-				return respond(files ? await files.diff(p) : { error: "no workspace" })
+				respond(res, files ? await files.diff(p) : { error: "no workspace" })
 			when "workspaces"
 				const ws = #connector.workspace(pid)
-				return respond({ list: ws ? ws.repos.list! : [] })
+				respond(res, { list: ws ? ws.repos.list! : [] })
 			when "terminal.spawn"
-				return respond(termSpawn(pid))
+				respond(res, termSpawn(pid))
 			when "terminal.input"
-				return respond(termInput(p.sessionId, p.data))
+				respond(res, termInput(p.sessionId, p.data))
 			when "terminal.output"
-				return respond(termOutput(p.sessionId))
+				respond(res, termOutput(p.sessionId))
 			when "terminal.resize"
-				return respond(termResize(p.sessionId, p.cols, p.rows))
+				respond(res, termResize(p.sessionId, p.cols, p.rows))
 			when "terminal.close"
-				return respond(termClose(p.sessionId))
+				respond(res, termClose(p.sessionId))
 			when "ping"
-				return respond({ ok: yes, v: VERSION })
+				respond(res, { ok: yes, v: VERSION })
 			else
-				return respond({ error: "unknown action" }, 400)
+				respond(res, { error: "unknown action" }, 400)
 
 	# --- WebSocket terminal ---
 
-	def handleUpgrade req
-		const url = new URL(req.url)
+	def handleUpgrade req, socket, head
+		const url = new URL(req.url, "http://localhost")
 		const token = url.searchParams.get("token")
 		const pid = #connector.auth(token)
 		unless pid
-			return respond({ error: "unauthorized" }, 403)
-		const success = #server.upgrade(req, { data: { pid } })
-		if success
-			return undefined
-		return respond({ error: "upgrade failed" }, 400)
+			socket.write("HTTP/1.1 403 Forbidden\r\n\r\n")
+			socket.destroy!
+			return
+		const srv = self
+		#wss.handleUpgrade(req, socket, head, do(ws)
+			#meta.set(ws, { pid })
+			srv.wsOpen(ws)
+			ws.on('message', do(msg) srv.wsMessage(ws, msg))
+			ws.on('close', do srv.wsClose(ws))
+		)
 
 	def wsOpen ws
-		const pid = ws.data.pid
-		const proj = #connector.project(pid)
+		const info = #meta.get(ws)
+		const proj = #connector.project(info.pid)
 		unless proj
 			ws.close!
 			return
 		const id = Math.random!.toString(36).slice(2)
-		ws.data.termId = id
-		log "terminal opened: {id} (project {pid})"
+		info.termId = id
+		log "terminal opened: {id} (project {info.pid})"
 
 		if pty
 			# Full PTY via node-pty — colors, job control, readline
@@ -155,35 +161,26 @@ export class Server
 				log "terminal closed: {id}"
 		else
 			# Fallback: pipe-based terminal (no job control)
-			const proc = Bun.spawn(["bash", "-i"], {
+			const proc = spawn('bash', ['-i'], {
 				cwd: proj.dir
-				stdin: "pipe"
-				stdout: "pipe"
-				stderr: "pipe"
+				stdio: ['pipe', 'pipe', 'pipe']
 			})
 			#terminals[id] = { proc, ws }
-			const pumpStream = do(stream)
-				try
-					const reader = stream.getReader!
-					while yes
-						const {done, value} = await reader.read!
-						break if done
-						try ws.send(value)
-				catch e
-					return
-			pumpStream(proc.stdout)
-			pumpStream(proc.stderr)
-			const terms = #terminals
-			proc.exited.then do
+			proc.stdout.on('data', do(chunk) try ws.send(chunk))
+			proc.stderr.on('data', do(chunk) try ws.send(chunk))
+			proc.on('close', do
 				try ws.close!
-				delete terms[id]
+				delete #terminals[id]
 				log "terminal closed: {id}"
+			)
 
 	def wsMessage ws, msg
-		const t = #terminals[ws.data..termId]
+		const info = #meta.get(ws)
+		return unless info
+		const t = #terminals[info.termId]
 		return unless t
 		if t.pty
-			const data = typeof msg == 'string' ? msg : new TextDecoder!.decode(msg)
+			const data = typeof msg == 'string' ? msg : msg.toString!
 			# Handle resize messages (JSON: {type:'resize', cols, rows})
 			if data[0] == '{'
 				try
@@ -193,10 +190,12 @@ export class Server
 						return
 			t.pty.write(data)
 		elif t.proc and t.proc.stdin
-			try t.proc.stdin.write(msg)
+			t.proc.stdin.write(msg)
 
 	def wsClose ws
-		const id = ws.data..termId
+		const info = #meta.get(ws)
+		return unless info
+		const id = info.termId
 		const t = #terminals[id]
 		if t
 			if t.pty
@@ -205,6 +204,7 @@ export class Server
 				try t.proc.kill!
 			delete #terminals[id]
 			log "terminal disconnected: {id}"
+		#meta.delete(ws)
 
 	# --- HTTP-based terminal sessions ---
 
@@ -213,42 +213,31 @@ export class Server
 		unless proj
 			return { error: "no project" }
 		const id = Math.random!.toString(36).slice(2) + Math.random!.toString(36).slice(2)
-		const proc = Bun.spawn(["bash", "-i"], {
+		const proc = spawn('bash', ['-i'], {
 			cwd: proj.dir
-			stdin: "pipe"
-			stdout: "pipe"
-			stderr: "pipe"
+			stdio: ['pipe', 'pipe', 'pipe']
 		})
 		const session = { proc, buffer: [], alive: yes }
 		#httpTerminals[id] = session
 		log "terminal.spawn: {id} (project {pid})"
 
-		# Pipe stdout → buffer
-		const pumpStream = do(stream)
-			try
-				const reader = stream.getReader!
-				while yes
-					const {done, value} = await reader.read!
-					break if done
-					if session.alive
-						# Convert Uint8Array to string for JSON transport
-						const text = new TextDecoder!.decode(value)
-						session.buffer.push(text)
-			catch e
-				return
+		proc.stdout.on('data', do(chunk)
+			if session.alive
+				session.buffer.push(chunk.toString!)
+		)
+		proc.stderr.on('data', do(chunk)
+			if session.alive
+				session.buffer.push(chunk.toString!)
+		)
 
-		pumpStream(proc.stdout)
-		pumpStream(proc.stderr)
-
-		# Handle process exit
 		const terms = #httpTerminals
-		proc.exited.then do
+		proc.on('close', do
 			session.alive = no
 			session.buffer.push("\r\n[process exited]")
 			log "terminal.exited: {id}"
-			# Auto-cleanup after 30s
 			setTimeout(&, 30000) do
 				delete terms[id]
+		)
 
 		{ ok: yes, sessionId: id }
 
@@ -270,7 +259,6 @@ export class Server
 		{ ok: yes, data: out.join(""), alive: s.alive }
 
 	def termResize sessionId, cols, rows
-		# Bun.spawn doesn't support resize without node-pty
 		{ ok: yes }
 
 	def termClose sessionId
@@ -282,5 +270,6 @@ export class Server
 			log "terminal.close: {sessionId}"
 		{ ok: yes }
 
-	def respond data, code = 200
-		Response.json(data, status: code)
+	def respond res, data, code = 200
+		res.writeHead(code, { 'Content-Type': 'application/json' })
+		res.end(JSON.stringify(data))

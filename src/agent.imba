@@ -1,9 +1,9 @@
 import {VERSION} from './protocol.imba'
-import {log, error as err} from './utils.imba'
+import {log, error as err, exec} from './utils.imba'
+import {spawn} from 'child_process'
 
 export class Agent
 	#connector
-	#decoder = new TextDecoder!
 
 	def constructor connector
 		#connector = connector
@@ -21,16 +21,13 @@ export class Agent
 		log "invoking {name} (session {sid}) in {dir}"
 
 		# ensure session exists (agent name before subcommand)
-		const ensure = Bun.spawn [
+		const ensure = await exec([
 			"acpx", name, "sessions", "ensure", "--name", sid
-		], cwd: dir, stdout: "pipe", stderr: "pipe"
-		await ensure.exited
+		], cwd: dir)
 		if ensure.exitCode != 0
-			const eout = await new Response(ensure.stderr).text!
-			log "ensure session: {eout.slice(0, 200)}"
+			log "ensure session: {ensure.stderr.slice(0, 200)}"
 
 		# run prompt via acpx with NDJSON output
-		# --format is global (before agent), -s is agent-specific (after agent)
 		const args = ["acpx", "--format", "json"]
 		if payload.model
 			args.push("--model", payload.model)
@@ -38,20 +35,17 @@ export class Agent
 
 		log "cmd: {args.join(' ')}"
 
-		const proc = Bun.spawn args,
+		const proc = spawn(args[0], args.slice(1), {
 			cwd: dir
-			stdout: "pipe"
-			stderr: "pipe"
+			stdio: ['pipe', 'pipe', 'pipe']
+		})
 
 		let buf = ""
 		let partial = ""
-		const reader = proc.stdout.getReader!
+		let stderr = ""
 
-		while yes
-			const {done, value} = await reader.read!
-			break if done
-			partial += #decoder.decode(value)
-			# parse complete NDJSON lines
+		proc.stdout.on('data', do(chunk)
+			partial += chunk.toString!
 			const lines = partial.split("\n")
 			partial = lines.pop! or ""
 			for line in lines
@@ -59,15 +53,18 @@ export class Agent
 				try
 					const event = JSON.parse(line)
 					buf += extract(event)
-					await send(payload, "output", session: sid, text: line)
+					send(payload, "output", session: sid, text: line)
 				catch
 					buf += line
+		)
 
-		await proc.exited
+		proc.stderr.on('data', do(chunk) stderr += chunk.toString!)
 
-		if proc.exitCode != 0
-			const stderr = await new Response(proc.stderr).text!
-			err "acpx exited {proc.exitCode}: {stderr.slice(0, 300)}"
+		const code = await new Promise do(ok)
+			proc.on('close', do(c) ok(c))
+
+		if code != 0
+			err "acpx exited {code}: {stderr.slice(0, 300)}"
 			await send(payload, "error", session: sid, error: stderr.slice(0, 500))
 		else
 			const changed = dir ? await delta(dir) : []
@@ -105,12 +102,8 @@ export class Agent
 
 	def delta dir
 		try
-			const proc = Bun.spawn ["git", "diff", "--name-status"],
-				cwd: dir
-				stdout: "pipe"
-			const out = await new Response(proc.stdout).text!
-			await proc.exited
-			out.trim!.split("\n").filter(Boolean).map do(line)
+			const result = await exec(["git", "diff", "--name-status"], cwd: dir)
+			result.stdout.trim!.split("\n").filter(Boolean).map do(line)
 				const parts = line.split("\t")
 				{ status: parts[0], path: parts[1] }
 		catch

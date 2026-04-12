@@ -1,5 +1,6 @@
 import {resolve, relative} from 'path'
-import {sanitize, denied} from './utils.imba'
+import {existsSync, readFileSync, statSync} from 'fs'
+import {sanitize, denied, exec} from './utils.imba'
 
 export class Files
 	#repos
@@ -52,14 +53,13 @@ export class Files
 		const abs = sanitize(dir, payload.path)
 		if denied(payload.path)
 			return { error: "denied" }
-		const file = Bun.file(abs)
-		const exists = await file.exists!
-		unless exists
+		unless existsSync(abs)
 			return { error: "not found" }
-		const size = file.size
+		const stat = statSync(abs)
+		const size = stat.size
 		if size > 1_000_000
 			return { path: payload.path, size, binary: yes, truncated: yes }
-		const content = await file.text!
+		const content = readFileSync(abs, 'utf8')
 		{ path: payload.path, content, size, binary: no }
 
 	def status payload
@@ -80,7 +80,5 @@ export class Files
 		{ diff: out }
 
 	def git dir, ...args
-		const proc = Bun.spawn(["git", ...args], cwd: dir, stdout: "pipe", stderr: "pipe")
-		const out = await new Response(proc.stdout).text!
-		await proc.exited
-		out.trim!
+		const result = await exec(["git", ...args], cwd: dir)
+		result.stdout.trim!
