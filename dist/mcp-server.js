@@ -145,22 +145,9 @@ async function handleMessage(msg) {
 				})
 				proc.unref()
 
-				// Brief check — if process crashes, it crashes instantly
-				await new Promise(resolve => setTimeout(resolve, 500))
-
-				if (entry.running) {
-					const output = entry.output.length ? `\n\nInitial output:\n${entry.output.join('\n')}` : ''
-					send({ jsonrpc: '2.0', id, result: {
-						content: [{ type: 'text', text: `Process running in background.\nPID: ${pid}\nCommand: ${cmd}${output}` }]
-					}})
-				} else {
-					const output = entry.output.length ? `\n\nOutput:\n${entry.output.join('\n')}` : ''
-					send({ jsonrpc: '2.0', id, result: {
-						content: [{ type: 'text', text: `Process exited immediately with code ${entry.exitCode}.\nCommand: ${cmd}${output}\n\nThe process did not stay running. Check the command and try again.` }],
-						isError: entry.exitCode !== 0
-					}})
-					bgProcs.delete(pid)
-				}
+				send({ jsonrpc: '2.0', id, result: {
+					content: [{ type: 'text', text: `Process started in background.\nPID: ${pid}\nCommand: ${cmd}\n\nThe process is now running independently. Use check_background(${pid}) to see its status and output.` }]
+				}})
 			} else if (name === 'check_background') {
 				const entry = bgProcs.get(args.pid)
 				if (!entry) {
