@@ -73,8 +73,29 @@ def writeMcpTo dir, payload, sid
 	writeFileSync(mcpPath, JSON.stringify(config, null, 2))
 	log "mcp config written to {mcpPath}"
 
+def enableMcpInClaude dir
+	# Claude Code requires MCP servers from .mcp.json to be explicitly approved
+	# in ~/.claude.json (enabledMcpjsonServers). In headless mode (acpx) the
+	# trust dialog never shows, so we add "aion" programmatically.
+	const home = process.env.HOME or process.env.USERPROFILE or "/root"
+	const claudeConfig = resolve(home, '.claude.json')
+	try
+		let config = {}
+		if existsSync(claudeConfig)
+			config = JSON.parse(readFileSync(claudeConfig, 'utf8'))
+		config.projects ||= {}
+		config.projects[dir] ||= {}
+		const enabled = config.projects[dir].enabledMcpjsonServers ||= []
+		unless enabled.includes('aion')
+			enabled.push('aion')
+			writeFileSync(claudeConfig, JSON.stringify(config, null, 2))
+			log "enabled aion MCP server in {claudeConfig} for {dir}"
+	catch e
+		err "failed to update claude config: {e.message}"
+
 def setupMcp dir, payload, sid
 	writeMcpTo(dir, payload, sid)
+	enableMcpInClaude(dir)
 
 export class Agent
 	#connector
