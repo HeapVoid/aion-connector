@@ -145,9 +145,22 @@ async function handleMessage(msg) {
 				})
 				proc.unref()
 
-				send({ jsonrpc: '2.0', id, result: {
-					content: [{ type: 'text', text: `Process started in background.\nPID: ${pid}\nCommand: ${cmd}\n\nUse check_background with this PID to see output, or stop_background to stop it.` }]
-				}})
+				// Wait 2 seconds then check if process is still alive
+				await new Promise(resolve => setTimeout(resolve, 2000))
+
+				if (entry.running) {
+					const output = entry.output.length ? `\n\nInitial output:\n${entry.output.join('\n')}` : ''
+					send({ jsonrpc: '2.0', id, result: {
+						content: [{ type: 'text', text: `Process running in background.\nPID: ${pid}\nCommand: ${cmd}${output}` }]
+					}})
+				} else {
+					const output = entry.output.length ? `\n\nOutput:\n${entry.output.join('\n')}` : ''
+					send({ jsonrpc: '2.0', id, result: {
+						content: [{ type: 'text', text: `Process exited immediately with code ${entry.exitCode}.\nCommand: ${cmd}${output}\n\nThe process did not stay running. Check the command and try again.` }],
+						isError: entry.exitCode !== 0
+					}})
+					bgProcs.delete(pid)
+				}
 			} else if (name === 'check_background') {
 				const entry = bgProcs.get(args.pid)
 				if (!entry) {
