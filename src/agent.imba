@@ -68,7 +68,7 @@ export class Agent
 		payload.prompt
 
 	def invoke payload, ws
-		const dir = ws.repos.resolve! or ws.dir
+		const dir = ws.dir
 		const name = payload.agent
 		const sid = payload.session or "default"
 
