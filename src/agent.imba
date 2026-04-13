@@ -131,22 +131,42 @@ export class Agent
 
 			log "cmd: {args.join(' ')}"
 
-			let result = await runProc(args, dir, sid, payload)
+			let result = null
+			let attempts = 0
+			const MAX_RETRIES = 2
 
-			# Retry once on "needs reconnect"
-			if !result.completed and (result.code == 5 or (result.code != 0 and result.stderr.includes("needs reconnect")))
-				log "acpx exit {result.code} (reconnect needed), retrying session {sid}"
+			while attempts <= MAX_RETRIES
 				result = await runProc(args, dir, sid, payload)
+				attempts++
 
-			# Send final result if not already sent during streaming
-			unless result.completed
-				if result.code != 0
-					err "acpx exited {result.code}: {result.stderr.slice(0, 300)}"
-					await send(payload, "error", sessionId: sid, error: result.stderr.slice(0, 500))
-				else
-					const changed = dir ? await delta(dir) : []
-					await send(payload, "complete", sessionId: sid, summary: result.buf, changed: changed)
-					log "session {sid} complete ({result.buf.length} chars)"
+				# Successfully completed with content during streaming
+				break if result.completed and result.buf.trim!.length > 0
+
+				# Decide if we should retry
+				const needsReconnect = !result.completed and (result.code == 5 or (result.code != 0 and result.stderr.includes("needs reconnect")))
+				const emptyResponse = result.completed and result.buf.trim!.length == 0
+
+				if (needsReconnect or emptyResponse) and attempts <= MAX_RETRIES
+					const reason = needsReconnect ? "reconnect needed (exit {result.code})" : "empty response"
+					log "session {sid}: {reason}, retry {attempts}/{MAX_RETRIES}"
+					continue
+
+				break
+
+			# Send final result if not already sent with content during streaming
+			if result.completed and result.buf.trim!.length > 0
+				# Already sent during streaming via finish()
+				log "session {sid} done ({result.buf.length} chars)"
+			elif result.completed and result.buf.trim!.length == 0
+				err "session {sid}: empty response after {attempts} attempt(s)"
+				await send(payload, "error", sessionId: sid, error: "Agent returned an empty response after {attempts} attempt(s)")
+			elif result.code != 0
+				err "acpx exited {result.code}: {result.stderr.slice(0, 300)}"
+				await send(payload, "error", sessionId: sid, error: result.stderr.slice(0, 500))
+			else
+				const changed = dir ? await delta(dir) : []
+				await send(payload, "complete", sessionId: sid, summary: result.buf, changed: changed)
+				log "session {sid} complete ({result.buf.length} chars)"
 		catch e
 			err "invoke crashed: {e.message}"
 			runningProcs.delete(sid)
@@ -171,8 +191,7 @@ export class Agent
 			if idleTimer
 				clearTimeout(idleTimer)
 			if buf.trim!.length == 0
-				log "session {sid} end_turn with empty response — treating as error"
-				await send(payload, "error", sessionId: sid, error: "Agent returned an empty response. Please try again.")
+				log "session {sid} end_turn with empty response — skipping send"
 				return
 			log "session {sid} complete — sending result ({buf.length} chars)"
 			const changed = dir ? await delta(dir) : []
