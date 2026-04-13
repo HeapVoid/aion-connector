@@ -9,7 +9,47 @@ const CALLBACK = process.env.AION_CALLBACK || ''
 const TOKEN = process.env.AION_TOKEN || ''
 const SESSION_ID = process.env.AION_SESSION_ID || ''
 
+const { spawn } = require('child_process')
+
+// Running background processes: pid → { proc, command, output (last N lines) }
+const bgProcs = new Map()
+const MAX_OUTPUT_LINES = 50
+
 const TOOLS = [
+	{
+		name: 'run_background',
+		description: 'Start a long-running process in the background (e.g. dev servers, watchers, builds). Returns immediately with a PID. The process keeps running after the tool returns. Use check_background to see its output later, and stop_background to stop it.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				command: { type: 'string', description: 'Shell command to run (e.g. "bun dev", "npm start", "python -m http.server 8080")' },
+				cwd: { type: 'string', description: 'Working directory (optional, defaults to project root)' }
+			},
+			required: ['command']
+		}
+	},
+	{
+		name: 'check_background',
+		description: 'Check status and recent output of a background process started with run_background.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				pid: { type: 'number', description: 'Process ID returned by run_background' }
+			},
+			required: ['pid']
+		}
+	},
+	{
+		name: 'stop_background',
+		description: 'Stop a background process started with run_background.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				pid: { type: 'number', description: 'Process ID returned by run_background' }
+			},
+			required: ['pid']
+		}
+	},
 	{
 		name: 'display_set',
 		description: 'Show a URL in the team display panel. The display panel is an iframe visible to all team members in the server UI. Use it to share live previews, dashboards, documentation, or any web content. The URL must be accessible from team members\' browsers (not localhost on the server).',
@@ -74,7 +114,67 @@ async function handleMessage(msg) {
 	if (method === 'tools/call') {
 		const { name, arguments: args } = params
 		try {
-			if (name === 'display_set') {
+			if (name === 'run_background') {
+				const cmd = args.command
+				if (!cmd) {
+					return send({ jsonrpc: '2.0', id, result: {
+						content: [{ type: 'text', text: 'Error: command is required' }], isError: true
+					}})
+				}
+				const proc = spawn('sh', ['-c', cmd], {
+					cwd: args.cwd || process.cwd(),
+					stdio: ['ignore', 'pipe', 'pipe'],
+					detached: true
+				})
+				const pid = proc.pid
+				const entry = { proc, command: cmd, output: [], running: true }
+				bgProcs.set(pid, entry)
+
+				const collect = (data) => {
+					const lines = data.toString().split('\n').filter(l => l.trim())
+					for (const line of lines) {
+						entry.output.push(line)
+						if (entry.output.length > MAX_OUTPUT_LINES) entry.output.shift()
+					}
+				}
+				proc.stdout.on('data', collect)
+				proc.stderr.on('data', collect)
+				proc.on('close', (code) => {
+					entry.running = false
+					entry.exitCode = code
+				})
+				proc.unref()
+
+				send({ jsonrpc: '2.0', id, result: {
+					content: [{ type: 'text', text: `Process started in background.\nPID: ${pid}\nCommand: ${cmd}\n\nUse check_background with this PID to see output, or stop_background to stop it.` }]
+				}})
+			} else if (name === 'check_background') {
+				const entry = bgProcs.get(args.pid)
+				if (!entry) {
+					return send({ jsonrpc: '2.0', id, result: {
+						content: [{ type: 'text', text: `No background process with PID ${args.pid}` }], isError: true
+					}})
+				}
+				const status = entry.running ? 'running' : `exited (code ${entry.exitCode})`
+				const output = entry.output.length ? entry.output.join('\n') : '(no output yet)'
+				send({ jsonrpc: '2.0', id, result: {
+					content: [{ type: 'text', text: `PID: ${args.pid}\nStatus: ${status}\nCommand: ${entry.command}\n\nRecent output:\n${output}` }]
+				}})
+			} else if (name === 'stop_background') {
+				const entry = bgProcs.get(args.pid)
+				if (!entry) {
+					return send({ jsonrpc: '2.0', id, result: {
+						content: [{ type: 'text', text: `No background process with PID ${args.pid}` }], isError: true
+					}})
+				}
+				try { process.kill(-args.pid) } catch (_) {
+					try { entry.proc.kill() } catch (_) {}
+				}
+				bgProcs.delete(args.pid)
+				send({ jsonrpc: '2.0', id, result: {
+					content: [{ type: 'text', text: `Process ${args.pid} stopped.` }]
+				}})
+			} else if (name === 'display_set') {
 				const ok = await callbackPost('agent-display', { url: args.url })
 				send({ jsonrpc: '2.0', id, result: {
 					content: [{ type: 'text', text: ok ? `Display set to: ${args.url}` : 'Failed to set display' }],
