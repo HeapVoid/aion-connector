@@ -18,27 +18,25 @@ export def stopAgent sid
 		runningProcs.delete(sid)
 
 def setupMcp dir, payload, sid
-	const mcpPath = resolve(dir, '.acpxrc.json')
-	let config = { mcpServers: [] }
+	const mcpPath = resolve(dir, '.mcp.json')
+	let config = { mcpServers: {} }
 
 	if existsSync(mcpPath)
 		try
 			config = JSON.parse(readFileSync(mcpPath, 'utf8'))
-			if !Array.isArray(config.mcpServers)
-				config.mcpServers = []
+			if !config.mcpServers or typeof config.mcpServers != 'object'
+				config.mcpServers = {}
 
-	# Update or add the aion MCP server entry
-	const env = [
-		{ name: "AION_CALLBACK", value: payload.callback or "" }
-		{ name: "AION_TOKEN", value: payload.token or "" }
-		{ name: "AION_SESSION_ID", value: sid }
-	]
-	const idx = config.mcpServers.findIndex(do(s) s.name == "aion")
-	const entry = { name: "aion", command: "node", args: [MCP_SERVER], env: env }
-	if idx >= 0
-		config.mcpServers[idx] = entry
-	else
-		config.mcpServers.push(entry)
+	config.mcpServers.aion = {
+		type: "stdio"
+		command: "node"
+		args: [MCP_SERVER]
+		env: {
+			AION_CALLBACK: payload.callback or ""
+			AION_TOKEN: payload.token or ""
+			AION_SESSION_ID: sid
+		}
+	}
 
 	writeFileSync(mcpPath, JSON.stringify(config, null, 2))
 	log "mcp config written to {mcpPath}"
