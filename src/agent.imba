@@ -2,6 +2,15 @@ import {VERSION} from './protocol.imba'
 import {log, error as err, exec} from './utils.imba'
 import {spawn} from 'child_process'
 
+const runningProcs = new Map!
+
+export def stopAgent sid
+	log "stopping agent session: {sid}"
+	const proc = runningProcs.get(sid)
+	if proc
+		try proc.kill!
+		runningProcs.delete(sid)
+
 export class Agent
 	#connector
 
@@ -15,7 +24,7 @@ export class Agent
 
 		unless name
 			err "no agent specified in payload"
-			await send(payload, "error", session: sid, error: "no agent specified")
+			await send(payload, "error", sessionId: sid, error: "no agent specified")
 			return
 
 		try
@@ -40,6 +49,7 @@ export class Agent
 				cwd: dir
 				stdio: ['pipe', 'pipe', 'pipe']
 			})
+			runningProcs.set(sid, proc)
 
 			let buf = ""
 			let partial = ""
@@ -54,7 +64,7 @@ export class Agent
 					try
 						const event = JSON.parse(line)
 						buf += extract(event)
-						send(payload, "output", session: sid, text: line)
+						send(payload, "output", sessionId: sid, text: line)
 					catch
 						buf += line
 			)
@@ -63,17 +73,19 @@ export class Agent
 
 			const code = await new Promise do(ok)
 				proc.on('close', do(c) ok(c))
+			runningProcs.delete(sid)
 
 			if code != 0
 				err "acpx exited {code}: {stderr.slice(0, 300)}"
-				await send(payload, "error", session: sid, error: stderr.slice(0, 500))
+				await send(payload, "error", sessionId: sid, error: stderr.slice(0, 500))
 			else
 				const changed = dir ? await delta(dir) : []
-				await send(payload, "complete", session: sid, summary: buf, changed: changed)
+				await send(payload, "complete", sessionId: sid, summary: buf, changed: changed)
 				log "session {sid} complete ({buf.length} chars)"
 		catch e
 			err "invoke crashed: {e.message}"
-			await send(payload, "error", session: sid, error: "connector error: {e.message}")
+			runningProcs.delete(sid)
+			await send(payload, "error", sessionId: sid, error: "connector error: {e.message}")
 
 	def extract event
 		# extract readable text from JSON-RPC event
@@ -92,15 +104,15 @@ export class Agent
 	def send payload, action, data, retries = 2
 		const cb = payload.callback
 		return unless cb
-		const body = JSON.stringify
-			v: VERSION
-			action: action
-			token: payload.token or ""
-			payload: data
+		const endpoints = { output: "agent-stream", complete: "agent-complete", error: "agent-error" }
+		const ep = endpoints[action]
+		return unless ep
+		data.token = payload.token or ""
+		const body = JSON.stringify(data)
 		let attempt = 0
 		while attempt <= retries
 			try
-				const res = await globalThis.fetch "{cb}/agents/channel",
+				const res = await globalThis.fetch "{cb}/internal/{ep}",
 					method: "POST"
 					headers: { "content-type": "application/json" }
 					body: body

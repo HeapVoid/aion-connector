@@ -1,4 +1,5 @@
 import {VERSION} from './protocol.imba'
+import {Agent, stopAgent} from './agent.imba'
 import {log} from './utils.imba'
 import {createServer} from 'http'
 import {WebSocketServer} from 'ws'
@@ -109,6 +110,9 @@ export class Server
 				respond(res, termResize(p.sessionId, p.cols, p.rows))
 			when "terminal.close"
 				respond(res, termClose(p.sessionId))
+			when "stop"
+				stopAgent(p.session)
+				respond(res, { ok: yes })
 			when "ping"
 				respond(res, { ok: yes, v: VERSION })
 			else
