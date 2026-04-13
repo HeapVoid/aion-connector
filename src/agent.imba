@@ -1,7 +1,7 @@
 import {VERSION} from './protocol.imba'
 import {log, error as err, exec} from './utils.imba'
 import {spawn} from 'child_process'
-import {writeFileSync, existsSync, readFileSync, mkdirSync} from 'fs'
+import {writeFileSync, existsSync, readFileSync} from 'fs'
 import {dirname, resolve} from 'path'
 import {fileURLToPath} from 'url'
 
@@ -41,35 +41,8 @@ def writeMcpTo dir, payload, sid
 	writeFileSync(mcpPath, JSON.stringify(config, null, 2))
 	log "mcp config written to {mcpPath}"
 
-def setupClaudePermissions dir
-	const claudeDir = resolve(dir, '.claude')
-	const settingsPath = resolve(claudeDir, 'settings.json')
-	let settings = { permissions: { allow: [] } }
-
-	if existsSync(settingsPath)
-		try
-			settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
-			if !settings.permissions
-				settings.permissions = { allow: [] }
-			if !Array.isArray(settings.permissions.allow)
-				settings.permissions.allow = []
-
-	const needed = ['mcp__aion__display_set', 'mcp__aion__display_clear']
-	let changed = no
-	for tool in needed
-		unless settings.permissions.allow.includes(tool)
-			settings.permissions.allow.push(tool)
-			changed = yes
-
-	if changed
-		unless existsSync(claudeDir)
-			mkdirSync(claudeDir, recursive: yes)
-		writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
-		log "claude permissions updated: {settingsPath}"
-
 def setupMcp dir, payload, sid
 	writeMcpTo(dir, payload, sid)
-	setupClaudePermissions(dir)
 
 export class Agent
 	#connector
@@ -120,7 +93,7 @@ export class Agent
 			const prompt = compose(payload)
 
 			# run prompt via acpx with NDJSON output
-			const args = ["acpx", "--cwd", dir, "--format", "json"]
+			const args = ["acpx", "--cwd", dir, "--format", "json", "--approve-all"]
 			if payload.model
 				args.push("--model", payload.model)
 			args.push(name, "-s", sid, prompt)
