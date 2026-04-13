@@ -83,7 +83,7 @@ export class Agent
 
 			# ensure session exists (agent name before subcommand)
 			const ensure = await exec([
-				"acpx", name, "sessions", "ensure", "--name", sid
+				"acpx", "--cwd", dir, name, "sessions", "ensure", "--name", sid
 			], cwd: dir)
 			if ensure.exitCode != 0
 				log "ensure session: {ensure.stderr.slice(0, 200)}"
@@ -92,7 +92,7 @@ export class Agent
 			const prompt = compose(payload)
 
 			# run prompt via acpx with NDJSON output
-			const args = ["acpx", "--format", "json"]
+			const args = ["acpx", "--cwd", dir, "--format", "json"]
 			if payload.model
 				args.push("--model", payload.model)
 			args.push(name, "-s", sid, prompt)
