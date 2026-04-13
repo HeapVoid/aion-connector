@@ -6,7 +6,7 @@ import {dirname, resolve} from 'path'
 import {fileURLToPath} from 'url'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
-const MCP_SERVER = resolve(__dir, 'mcp-server.js')
+const MCP_SERVER = resolve(__dir, 'mcp-server.cjs')
 
 # If no NDJSON output for this long, auto-complete (fallback for long-running tools like bun dev)
 const IDLE_TIMEOUT = 30 * 1000 # 30 seconds
@@ -49,53 +49,34 @@ def sendCallback payload, action, data
 		err "shutdown callback ({action}): {e.message}"
 
 def writeMcpTo dir, payload, sid
-	const mcpPath = resolve(dir, '.mcp.json')
-	let config = { mcpServers: {} }
+	# acpx reads .acpxrc.json (array-based format), not .mcp.json
+	const mcpPath = resolve(dir, '.acpxrc.json')
+	let config = { mcpServers: [] }
 
 	if existsSync(mcpPath)
 		try
 			config = JSON.parse(readFileSync(mcpPath, 'utf8'))
-			if !config.mcpServers or typeof config.mcpServers != 'object'
-				config.mcpServers = {}
+			if !Array.isArray(config.mcpServers)
+				config.mcpServers = []
 
-	config.mcpServers.aion = {
-		type: "stdio"
-		command: "node"
-		args: [MCP_SERVER]
-		env: {
-			AION_CALLBACK: payload.callback or ""
-			AION_TOKEN: payload.token or ""
-			AION_SESSION_ID: sid
-		}
-		instructions: "AION platform tools. Use run_background to start long-running processes (dev servers, watchers) — NEVER use Bash for these. Use check_background/stop_background to manage them. Use display_set to show URLs on the team display panel, display_clear to clear it."
-	}
+	const env = [
+		{ name: "AION_CALLBACK", value: payload.callback or "" }
+		{ name: "AION_TOKEN", value: payload.token or "" }
+		{ name: "AION_SESSION_ID", value: sid }
+	]
+	const entry = { name: "aion", command: "node", args: [MCP_SERVER], env: env }
+	const idx = config.mcpServers.findIndex(do(s) s.name == "aion")
+	if idx >= 0
+		config.mcpServers[idx] = entry
+	else
+		config.mcpServers.push(entry)
 
 	writeFileSync(mcpPath, JSON.stringify(config, null, 2))
 	log "mcp config written to {mcpPath}"
 
-def enableMcpInClaude dir
-	# Claude Code requires MCP servers from .mcp.json to be explicitly approved.
-	# In headless mode (acpx) the trust dialog never shows, so we enable all
-	# project MCP servers programmatically in ~/.claude.json.
-	const home = process.env.HOME or process.env.USERPROFILE or "/root"
-	const claudeConfig = resolve(home, '.claude.json')
-	try
-		let config = {}
-		if existsSync(claudeConfig)
-			config = JSON.parse(readFileSync(claudeConfig, 'utf8'))
-		config.projects ||= {}
-		config.projects[dir] ||= {}
-		unless config.projects[dir].enableAllProjectMcpServers
-			config.projects[dir].enableAllProjectMcpServers = yes
-			config.projects[dir].hasTrustDialogAccepted = yes
-			writeFileSync(claudeConfig, JSON.stringify(config, null, 2))
-			log "enabled all project MCP servers in {claudeConfig} for {dir}"
-	catch e
-		err "failed to update claude config: {e.message}"
-
-def setupMcp dir, payload, sid
-	writeMcpTo(dir, payload, sid)
-	enableMcpInClaude(dir)
+def setupMcp ws, payload, sid
+	# Write .acpxrc.json to workspace root (acpx --cwd points here)
+	writeMcpTo(ws.dir, payload, sid)
 
 export class Agent
 	#connector
@@ -131,7 +112,7 @@ export class Agent
 			await send(payload, "error", sessionId: sid, error: "no agent specified")
 			return
 
-		setupMcp(dir, payload, sid)
+		setupMcp(ws, payload, sid)
 		try
 			log "invoking {name} (session {sid}) in {dir}"
 
@@ -146,7 +127,8 @@ export class Agent
 			const prompt = compose(payload)
 
 			# run prompt via acpx with NDJSON output
-			const args = ["acpx", "--cwd", dir, "--format", "json", "--approve-all"]
+			# --ttl 10: kill queue owner 10s after prompt completes to free RAM
+			const args = ["acpx", "--cwd", dir, "--format", "json", "--approve-all", "--ttl", "10"]
 			if payload.model
 				args.push("--model", payload.model)
 			args.push(name, "-s", sid, prompt)
