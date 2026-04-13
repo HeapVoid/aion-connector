@@ -1,6 +1,6 @@
 {
 	"name": "aion-connector",
-	"version": "0.3.0",
+	"version": "0.3.3",
 	"type": "module",
 	"description": "Universal connector for remote AI agents in AION",
 	"bin": {
@@ -12,7 +12,7 @@
 		"README.md"
 	],
 	"scripts": {
-		"build": "bunx bimba src/cli.imba --outdir dist --target node --external node-pty --external ws"
+		"build": "bunx bimba src/cli.imba --outdir dist --target node --external node-pty --external ws && cp src/mcp-server.js dist/"
 	},
 	"dependencies": {
 		"node-pty": "^1.0.0",

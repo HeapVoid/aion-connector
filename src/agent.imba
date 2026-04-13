@@ -1,6 +1,12 @@
 import {VERSION} from './protocol.imba'
 import {log, error as err, exec} from './utils.imba'
 import {spawn} from 'child_process'
+import {writeFileSync, unlinkSync, existsSync, readFileSync} from 'fs'
+import {dirname, resolve} from 'path'
+import {fileURLToPath} from 'url'
+
+const __dir = dirname(fileURLToPath(import.meta.url))
+const MCP_SERVER = resolve(__dir, 'mcp-server.js')
 
 const runningProcs = new Map!
 
@@ -10,6 +16,42 @@ export def stopAgent sid
 	if proc
 		try proc.kill!
 		runningProcs.delete(sid)
+
+def setupMcp dir, payload, sid
+	const mcpPath = resolve(dir, '.mcp.json')
+	let original = null
+	let config = { mcpServers: {} }
+
+	if existsSync(mcpPath)
+		try
+			original = readFileSync(mcpPath, 'utf8')
+			config = JSON.parse(original)
+			if !config.mcpServers
+				config.mcpServers = {}
+
+	config.mcpServers.aion = {
+		type: "stdio"
+		command: "node"
+		args: [MCP_SERVER]
+		env: {
+			AION_CALLBACK: payload.callback or ""
+			AION_TOKEN: payload.token or ""
+			AION_SESSION_ID: sid
+		}
+	}
+
+	writeFileSync(mcpPath, JSON.stringify(config))
+	log "mcp config written to {mcpPath}"
+	return { path: mcpPath, original }
+
+def teardownMcp mcp
+	return unless mcp
+	try
+		if mcp.original
+			writeFileSync(mcp.path, mcp.original)
+		else
+			unlinkSync(mcp.path)
+		log "mcp config cleaned up"
 
 export class Agent
 	#connector
@@ -45,6 +87,7 @@ export class Agent
 			await send(payload, "error", sessionId: sid, error: "no agent specified")
 			return
 
+		const mcp = setupMcp(dir, payload, sid)
 		try
 			log "invoking {name} (session {sid}) in {dir}"
 
@@ -98,7 +141,44 @@ export class Agent
 				proc.on('close', do(c) ok(c))
 			runningProcs.delete(sid)
 
-			if code != 0
+			if code == 5
+				# Exit code 5 = "agent needs reconnect" — auto-retry once
+				log "acpx exit 5 (reconnect needed), retrying session {sid}"
+				buf = ""
+				partial = ""
+				stderr = ""
+				const proc2 = spawn(args[0], args.slice(1), {
+					cwd: dir
+					stdio: ['pipe', 'pipe', 'pipe']
+				})
+				runningProcs.set(sid, proc2)
+				proc2.stdout.on('data', do(chunk)
+					partial += chunk.toString!
+					const lines = partial.split("\n")
+					partial = lines.pop! or ""
+					for line in lines
+						continue unless line.trim!
+						try
+							const event = JSON.parse(line)
+							const text = extract(event)
+							buf += text
+							if text
+								send(payload, "output", sessionId: sid, text: text)
+						catch
+							buf += line
+				)
+				proc2.stderr.on('data', do(chunk) stderr += chunk.toString!)
+				const code2 = await new Promise do(ok)
+					proc2.on('close', do(c) ok(c))
+				runningProcs.delete(sid)
+				if code2 != 0
+					err "acpx retry exited {code2}: {stderr.slice(0, 300)}"
+					await send(payload, "error", sessionId: sid, error: stderr.slice(0, 500))
+				else
+					const changed = dir ? await delta(dir) : []
+					await send(payload, "complete", sessionId: sid, summary: buf, changed: changed)
+					log "session {sid} complete after retry ({buf.length} chars)"
+			elif code != 0
 				err "acpx exited {code}: {stderr.slice(0, 300)}"
 				await send(payload, "error", sessionId: sid, error: stderr.slice(0, 500))
 			else
@@ -109,6 +189,7 @@ export class Agent
 			err "invoke crashed: {e.message}"
 			runningProcs.delete(sid)
 			await send(payload, "error", sessionId: sid, error: "connector error: {e.message}")
+		teardownMcp(mcp)
 
 	def extract event
 		# extract readable text from JSON-RPC event

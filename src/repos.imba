@@ -1,6 +1,6 @@
 import {join} from 'path'
 import {log, error, exec} from './utils.imba'
-import {existsSync} from 'fs'
+import {existsSync, mkdirSync} from 'fs'
 
 export class Repos
 	#dir = null
@@ -8,10 +8,14 @@ export class Repos
 
 	def constructor dir
 		#dir = dir
+		unless existsSync(dir)
+			mkdirSync(dir, recursive: yes)
+			log "created workspace dir: {dir}"
 
 	def sync list
 		for repo in list
-			const dest = join(#dir, repo.name)
+			const folder = repodir(repo.url) or repo.name
+			const dest = join(#dir, folder)
 			if existsSync(dest)
 				await pull(dest, repo)
 			else
@@ -46,6 +50,11 @@ export class Repos
 
 	def list
 		Object.entries(#map).map do([name, path]) { name, path }
+
+	def repodir url
+		return null unless url
+		const parts = url.replace(/\.git$/, '').split('/')
+		parts[parts.length - 1] if parts.length
 
 	def head dir
 		const result = await exec(["git", "rev-parse", "HEAD"], cwd: dir)
