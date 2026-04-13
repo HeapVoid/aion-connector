@@ -170,6 +170,10 @@ export class Agent
 			completed = yes
 			if idleTimer
 				clearTimeout(idleTimer)
+			if buf.trim!.length == 0
+				log "session {sid} end_turn with empty response — treating as error"
+				await send(payload, "error", sessionId: sid, error: "Agent returned an empty response. Please try again.")
+				return
 			log "session {sid} complete — sending result ({buf.length} chars)"
 			const changed = dir ? await delta(dir) : []
 			await send(payload, "complete", sessionId: sid, summary: buf, changed: changed)
