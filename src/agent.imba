@@ -17,6 +17,24 @@ export class Agent
 	def constructor connector
 		#connector = connector
 
+	def compose payload
+		let parts = []
+		if payload.system
+			parts.push("<system>\n{payload.system}\n</system>")
+		if payload.memory
+			parts.push("<project-notes>\n{payload.memory}\n</project-notes>")
+		if payload.instructions
+			parts.push("<chat-instructions>\n{payload.instructions}\n</chat-instructions>")
+		if payload.history and payload.history.length
+			let lines = []
+			for msg in payload.history
+				const role = msg.role or msg.source or 'user'
+				lines.push("{role}: {msg.text}")
+			parts.push("<recent-messages>\n{lines.join('\n')}\n</recent-messages>")
+		if parts.length
+			return "{parts.join('\n\n')}\n\n{payload.prompt}"
+		payload.prompt
+
 	def invoke payload, ws
 		const dir = ws.repos.resolve! or ws.dir
 		const name = payload.agent
@@ -37,11 +55,14 @@ export class Agent
 			if ensure.exitCode != 0
 				log "ensure session: {ensure.stderr.slice(0, 200)}"
 
+			# compose prompt with system context
+			const prompt = compose(payload)
+
 			# run prompt via acpx with NDJSON output
 			const args = ["acpx", "--format", "json"]
 			if payload.model
 				args.push("--model", payload.model)
-			args.push(name, "-s", sid, payload.prompt)
+			args.push(name, "-s", sid, prompt)
 
 			log "cmd: {args.join(' ')}"
 
@@ -63,8 +84,10 @@ export class Agent
 					continue unless line.trim!
 					try
 						const event = JSON.parse(line)
-						buf += extract(event)
-						send(payload, "output", sessionId: sid, text: line)
+						const text = extract(event)
+						buf += text
+						if text
+							send(payload, "output", sessionId: sid, text: text)
 					catch
 						buf += line
 			)
