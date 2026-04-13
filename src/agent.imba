@@ -67,6 +67,7 @@ def writeMcpTo dir, payload, sid
 			AION_TOKEN: payload.token or ""
 			AION_SESSION_ID: sid
 		}
+		instructions: "AION platform tools. Use run_background to start long-running processes (dev servers, watchers) — NEVER use Bash for these. Use check_background/stop_background to manage them. Use display_set to show URLs on the team display panel, display_clear to clear it."
 	}
 
 	writeFileSync(mcpPath, JSON.stringify(config, null, 2))
@@ -176,7 +177,6 @@ export class Agent
 		const proc = spawn(args[0], args.slice(1), {
 			cwd: dir
 			stdio: ['pipe', 'pipe', 'pipe']
-			env: { ...process.env, ENABLE_TOOL_SEARCH: 'false' }
 		})
 		runningProcs.set(sid, { proc, payload })
 
