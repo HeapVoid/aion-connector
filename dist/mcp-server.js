@@ -3,6 +3,7 @@
 // AION MCP Server — tools for agents running in the AION platform
 // Spawned by connector as stdio MCP server per agent session.
 // Env: AION_CALLBACK, AION_TOKEN, AION_SESSION_ID
+// Protocol: MCP stdio transport — newline-delimited JSON-RPC
 
 const CALLBACK = process.env.AION_CALLBACK || ''
 const TOKEN = process.env.AION_TOKEN || ''
@@ -27,46 +28,26 @@ const TOOLS = [
 	}
 ]
 
-// --- MCP protocol (Content-Length framing) ---
+// --- MCP stdio transport (newline-delimited JSON-RPC) ---
 
 function send(msg) {
-	const json = JSON.stringify(msg)
-	const len = Buffer.byteLength(json)
-	process.stdout.write(`Content-Length: ${len}\r\n\r\n${json}`)
+	process.stdout.write(JSON.stringify(msg) + '\n')
 }
 
 let buffer = ''
 process.stdin.setEncoding('utf8')
 process.stdin.on('data', chunk => {
 	buffer += chunk
-	processBuffer()
-})
-
-let processing = false
-async function processBuffer() {
-	if (processing) return
-	processing = true
-	while (true) {
-		const headerEnd = buffer.indexOf('\r\n\r\n')
-		if (headerEnd === -1) break
-
-		const header = buffer.substring(0, headerEnd)
-		const match = header.match(/Content-Length: (\d+)/i)
-		if (!match) { buffer = buffer.substring(headerEnd + 4); continue }
-
-		const len = parseInt(match[1], 10)
-		const start = headerEnd + 4
-		if (buffer.length < start + len) break
-
-		const content = buffer.substring(start, start + len)
-		buffer = buffer.substring(start + len)
-
+	const lines = buffer.split('\n')
+	buffer = lines.pop() // keep incomplete last line
+	for (const line of lines) {
+		const trimmed = line.trim()
+		if (!trimmed) continue
 		try {
-			await handleMessage(JSON.parse(content))
+			handleMessage(JSON.parse(trimmed))
 		} catch (_) {}
 	}
-	processing = false
-}
+})
 
 // --- Message handling ---
 
@@ -80,6 +61,8 @@ async function handleMessage(msg) {
 			serverInfo: { name: 'aion', version: '1.0.0' }
 		}})
 	}
+
+	if (method === 'notifications/initialized') return
 
 	// Notifications — no response
 	if (!id) return
