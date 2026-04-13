@@ -145,8 +145,8 @@ async function handleMessage(msg) {
 				})
 				proc.unref()
 
-				// Wait 2 seconds then check if process is still alive
-				await new Promise(resolve => setTimeout(resolve, 2000))
+				// Brief check — if process crashes, it crashes instantly
+				await new Promise(resolve => setTimeout(resolve, 500))
 
 				if (entry.running) {
 					const output = entry.output.length ? `\n\nInitial output:\n${entry.output.join('\n')}` : ''
