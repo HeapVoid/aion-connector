@@ -41,12 +41,8 @@ def writeMcpTo dir, payload, sid
 	writeFileSync(mcpPath, JSON.stringify(config, null, 2))
 	log "mcp config written to {mcpPath}"
 
-def setupMcp dir, repos, payload, sid
-	# Write .mcp.json to workspace root
+def setupMcp dir, payload, sid
 	writeMcpTo(dir, payload, sid)
-	# Write .mcp.json to each repo dir (agents look for it in git roots)
-	for entry in repos
-		writeMcpTo(entry.path, payload, sid)
 
 export class Agent
 	#connector
@@ -82,8 +78,7 @@ export class Agent
 			await send(payload, "error", sessionId: sid, error: "no agent specified")
 			return
 
-		const repoList = ws.repos ? ws.repos.list! : []
-		setupMcp(dir, repoList, payload, sid)
+		setupMcp(dir, payload, sid)
 		try
 			log "invoking {name} (session {sid}) in {dir}"
 
