@@ -12,10 +12,38 @@ const runningProcs = new Map!
 
 export def stopAgent sid
 	log "stopping agent session: {sid}"
-	const proc = runningProcs.get(sid)
-	if proc
-		try proc.kill!
+	const entry = runningProcs.get(sid)
+	if entry
+		try entry.proc.kill!
 		runningProcs.delete(sid)
+
+export def shutdownAllAgents
+	if runningProcs.size == 0
+		return
+	log "shutting down {runningProcs.size} running agent(s)..."
+	const promises = []
+	for [sid, entry] of runningProcs
+		try entry.proc.kill!
+		if entry.payload
+			promises.push(sendCallback(entry.payload, "error", sessionId: sid, error: "Connector shutting down"))
+		runningProcs.delete(sid)
+	try await Promise.allSettled(promises)
+	log "all agent sessions closed"
+
+def sendCallback payload, action, data
+	const cb = payload.callback
+	return unless cb
+	const endpoints = { output: "agent-stream", complete: "agent-complete", error: "agent-error" }
+	const ep = endpoints[action]
+	return unless ep
+	data.token = payload.token or ""
+	try
+		await globalThis.fetch "{cb}/internal/{ep}",
+			method: "POST"
+			headers: { "content-type": "application/json" }
+			body: JSON.stringify(data)
+	catch e
+		err "shutdown callback ({action}): {e.message}"
 
 def writeMcpTo dir, payload, sid
 	const mcpPath = resolve(dir, '.mcp.json')
@@ -104,7 +132,7 @@ export class Agent
 				cwd: dir
 				stdio: ['pipe', 'pipe', 'pipe']
 			})
-			runningProcs.set(sid, proc)
+			runningProcs.set(sid, { proc, payload })
 
 			let buf = ""
 			let partial = ""
@@ -142,7 +170,7 @@ export class Agent
 					cwd: dir
 					stdio: ['pipe', 'pipe', 'pipe']
 				})
-				runningProcs.set(sid, proc2)
+				runningProcs.set(sid, { proc: proc2, payload })
 				proc2.stdout.on('data', do(chunk)
 					partial += chunk.toString!
 					const lines = partial.split("\n")

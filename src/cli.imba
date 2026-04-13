@@ -37,5 +37,17 @@ unless config.projects and Object.keys(config.projects).length
 	error "Config must have at least one project"
 	process.exit(1)
 
+import {shutdownAllAgents} from './agent.imba'
+
 const connector = new Connector(config)
 await connector.start!
+
+# Graceful shutdown — close all agent sessions before exit
+const shutdown = do
+	log "shutting down..."
+	await shutdownAllAgents!
+	connector.stop!
+	process.exit(0)
+
+process.on('SIGTERM', shutdown)
+process.on('SIGINT', shutdown)
