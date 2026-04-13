@@ -176,6 +176,7 @@ export class Agent
 		const proc = spawn(args[0], args.slice(1), {
 			cwd: dir
 			stdio: ['pipe', 'pipe', 'pipe']
+			env: { ...process.env, ENABLE_TOOL_SEARCH: 'false' }
 		})
 		runningProcs.set(sid, { proc, payload })
 
