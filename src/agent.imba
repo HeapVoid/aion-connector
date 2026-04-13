@@ -8,6 +8,9 @@ import {fileURLToPath} from 'url'
 const __dir = dirname(fileURLToPath(import.meta.url))
 const MCP_SERVER = resolve(__dir, 'mcp-server.js')
 
+# If no NDJSON output for this long, auto-complete (fallback for long-running tools like bun dev)
+const IDLE_TIMEOUT = 30 * 1000 # 30 seconds
+
 const runningProcs = new Map!
 
 export def stopAgent sid
@@ -128,86 +131,99 @@ export class Agent
 
 			log "cmd: {args.join(' ')}"
 
-			const proc = spawn(args[0], args.slice(1), {
-				cwd: dir
-				stdio: ['pipe', 'pipe', 'pipe']
-			})
-			runningProcs.set(sid, { proc, payload })
+			let result = await runProc(args, dir, sid, payload)
 
-			let buf = ""
-			let partial = ""
-			let stderr = ""
+			# Retry once on "needs reconnect"
+			if !result.completed and (result.code == 5 or (result.code != 0 and result.stderr.includes("needs reconnect")))
+				log "acpx exit {result.code} (reconnect needed), retrying session {sid}"
+				result = await runProc(args, dir, sid, payload)
 
-			proc.stdout.on('data', do(chunk)
-				partial += chunk.toString!
-				const lines = partial.split("\n")
-				partial = lines.pop! or ""
-				for line in lines
-					continue unless line.trim!
-					try
-						const event = JSON.parse(line)
-						const text = extract(event)
-						buf += text
-						if text
-							send(payload, "output", sessionId: sid, text: text)
-					catch
-						buf += line
-			)
-
-			proc.stderr.on('data', do(chunk) stderr += chunk.toString!)
-
-			const code = await new Promise do(ok)
-				proc.on('close', do(c) ok(c))
-			runningProcs.delete(sid)
-
-			if code == 5
-				# Exit code 5 = "agent needs reconnect" — auto-retry once
-				log "acpx exit 5 (reconnect needed), retrying session {sid}"
-				buf = ""
-				partial = ""
-				stderr = ""
-				const proc2 = spawn(args[0], args.slice(1), {
-					cwd: dir
-					stdio: ['pipe', 'pipe', 'pipe']
-				})
-				runningProcs.set(sid, { proc: proc2, payload })
-				proc2.stdout.on('data', do(chunk)
-					partial += chunk.toString!
-					const lines = partial.split("\n")
-					partial = lines.pop! or ""
-					for line in lines
-						continue unless line.trim!
-						try
-							const event = JSON.parse(line)
-							const text = extract(event)
-							buf += text
-							if text
-								send(payload, "output", sessionId: sid, text: text)
-						catch
-							buf += line
-				)
-				proc2.stderr.on('data', do(chunk) stderr += chunk.toString!)
-				const code2 = await new Promise do(ok)
-					proc2.on('close', do(c) ok(c))
-				runningProcs.delete(sid)
-				if code2 != 0
-					err "acpx retry exited {code2}: {stderr.slice(0, 300)}"
-					await send(payload, "error", sessionId: sid, error: stderr.slice(0, 500))
+			# Send final result if not already sent during streaming
+			unless result.completed
+				if result.code != 0
+					err "acpx exited {result.code}: {result.stderr.slice(0, 300)}"
+					await send(payload, "error", sessionId: sid, error: result.stderr.slice(0, 500))
 				else
 					const changed = dir ? await delta(dir) : []
-					await send(payload, "complete", sessionId: sid, summary: buf, changed: changed)
-					log "session {sid} complete after retry ({buf.length} chars)"
-			elif code != 0
-				err "acpx exited {code}: {stderr.slice(0, 300)}"
-				await send(payload, "error", sessionId: sid, error: stderr.slice(0, 500))
-			else
-				const changed = dir ? await delta(dir) : []
-				await send(payload, "complete", sessionId: sid, summary: buf, changed: changed)
-				log "session {sid} complete ({buf.length} chars)"
+					await send(payload, "complete", sessionId: sid, summary: result.buf, changed: changed)
+					log "session {sid} complete ({result.buf.length} chars)"
 		catch e
 			err "invoke crashed: {e.message}"
 			runningProcs.delete(sid)
 			await send(payload, "error", sessionId: sid, error: "connector error: {e.message}")
+
+	def runProc args, dir, sid, payload
+		const proc = spawn(args[0], args.slice(1), {
+			cwd: dir
+			stdio: ['pipe', 'pipe', 'pipe']
+		})
+		runningProcs.set(sid, { proc, payload })
+
+		let buf = ""
+		let partial = ""
+		let stderr = ""
+		let completed = no
+		let idleTimer = null
+
+		const finish = do
+			return if completed
+			completed = yes
+			if idleTimer
+				clearTimeout(idleTimer)
+			log "session {sid} complete — sending result ({buf.length} chars)"
+			const changed = dir ? await delta(dir) : []
+			await send(payload, "complete", sessionId: sid, summary: buf, changed: changed)
+
+		const resetIdle = do
+			if idleTimer
+				clearTimeout(idleTimer)
+			idleTimer = setTimeout(&, IDLE_TIMEOUT) do
+				if !completed and buf.length > 0
+					log "session {sid} idle {IDLE_TIMEOUT / 1000}s — auto-completing"
+					finish!
+
+		proc.stdout.on('data', do(chunk)
+			resetIdle!
+			partial += chunk.toString!
+			const lines = partial.split("\n")
+			partial = lines.pop! or ""
+			for line in lines
+				continue unless line.trim!
+				try
+					const event = JSON.parse(line)
+					if isTurnComplete(event)
+						finish!
+						continue
+					const text = extract(event)
+					buf += text
+					if text
+						send(payload, "output", sessionId: sid, text: text)
+				catch
+					buf += line
+		)
+
+		proc.stderr.on('data', do(chunk)
+			resetIdle!
+			stderr += chunk.toString!
+		)
+
+		# Start idle timer
+		resetIdle!
+
+		const code = await new Promise do(ok)
+			proc.on('close', do(c) ok(c))
+		if idleTimer
+			clearTimeout(idleTimer)
+		runningProcs.delete(sid)
+
+		if completed
+			log "acpx exited {code} after completion (session {sid})"
+
+		{ buf, stderr, code, completed }
+
+	def isTurnComplete event
+		# JSON-RPC result with stopReason = agent finished responding
+		event..result..stopReason == "end_turn"
 
 	def extract event
 		# extract readable text from JSON-RPC event
