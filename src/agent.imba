@@ -1,7 +1,7 @@
 import {VERSION} from './protocol.imba'
 import {log, error as err, exec} from './utils.imba'
 import {spawn} from 'child_process'
-import {writeFileSync, unlinkSync, existsSync, readFileSync} from 'fs'
+import {writeFileSync, existsSync, readFileSync} from 'fs'
 import {dirname, resolve} from 'path'
 import {fileURLToPath} from 'url'
 
@@ -18,40 +18,30 @@ export def stopAgent sid
 		runningProcs.delete(sid)
 
 def setupMcp dir, payload, sid
-	const mcpPath = resolve(dir, '.mcp.json')
-	let original = null
-	let config = { mcpServers: {} }
+	const mcpPath = resolve(dir, '.acpxrc.json')
+	let config = { mcpServers: [] }
 
 	if existsSync(mcpPath)
 		try
-			original = readFileSync(mcpPath, 'utf8')
-			config = JSON.parse(original)
-			if !config.mcpServers
-				config.mcpServers = {}
+			config = JSON.parse(readFileSync(mcpPath, 'utf8'))
+			if !Array.isArray(config.mcpServers)
+				config.mcpServers = []
 
-	config.mcpServers.aion = {
-		type: "stdio"
-		command: "node"
-		args: [MCP_SERVER]
-		env: {
-			AION_CALLBACK: payload.callback or ""
-			AION_TOKEN: payload.token or ""
-			AION_SESSION_ID: sid
-		}
-	}
+	# Update or add the aion MCP server entry
+	const env = [
+		{ name: "AION_CALLBACK", value: payload.callback or "" }
+		{ name: "AION_TOKEN", value: payload.token or "" }
+		{ name: "AION_SESSION_ID", value: sid }
+	]
+	const idx = config.mcpServers.findIndex(do(s) s.name == "aion")
+	const entry = { name: "aion", command: "node", args: [MCP_SERVER], env: env }
+	if idx >= 0
+		config.mcpServers[idx] = entry
+	else
+		config.mcpServers.push(entry)
 
-	writeFileSync(mcpPath, JSON.stringify(config))
+	writeFileSync(mcpPath, JSON.stringify(config, null, 2))
 	log "mcp config written to {mcpPath}"
-	return { path: mcpPath, original }
-
-def teardownMcp mcp
-	return unless mcp
-	try
-		if mcp.original
-			writeFileSync(mcp.path, mcp.original)
-		else
-			unlinkSync(mcp.path)
-		log "mcp config cleaned up"
 
 export class Agent
 	#connector
@@ -87,7 +77,7 @@ export class Agent
 			await send(payload, "error", sessionId: sid, error: "no agent specified")
 			return
 
-		const mcp = setupMcp(dir, payload, sid)
+		setupMcp(dir, payload, sid)
 		try
 			log "invoking {name} (session {sid}) in {dir}"
 
@@ -189,7 +179,6 @@ export class Agent
 			err "invoke crashed: {e.message}"
 			runningProcs.delete(sid)
 			await send(payload, "error", sessionId: sid, error: "connector error: {e.message}")
-		teardownMcp(mcp)
 
 	def extract event
 		# extract readable text from JSON-RPC event
