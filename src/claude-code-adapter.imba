@@ -94,7 +94,7 @@ export class ClaudeCodeAdapter
 					ok({ status: 'error', error: "claude setup-token exited {ec}" })
 
 	def writeSkills opts
-		const personaHash = sync.writeFile(sync.personaPath(home), opts.persona)
+		const personaHash = sync.writeFile(sync.personaPath(home), opts.persona, opts.expected_persona_hash)
 		const skillHashes = sync.writeSkills(home, opts.skills or [])
 		{ persona: personaHash, skills: skillHashes }
 

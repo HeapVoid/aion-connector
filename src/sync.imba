@@ -66,5 +66,5 @@ export def writeSkills home, skills
 		unless keep.has(f)
 			unlinkSync(join(d, f))
 	skills.map do(s)
-		writeFile(skillPath(home, s.name), s.content, undefined, 0o600)
+		writeFile(skillPath(home, s.name), s.content, s.expected_prev_hash, 0o600)
 		{ name: s.name, hash: sha256Hex(s.content) }

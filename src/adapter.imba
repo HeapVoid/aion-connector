@@ -54,7 +54,7 @@ export class StubAdapter
 		{ status: 'error', error: 'stub adapter does not authenticate' }
 
 	def writeSkills opts
-		const personaHash = sync.writeFile(sync.personaPath(home), opts.persona)
+		const personaHash = sync.writeFile(sync.personaPath(home), opts.persona, opts.expected_persona_hash)
 		const skillHashes = sync.writeSkills(home, opts.skills or [])
 		{ persona: personaHash, skills: skillHashes }
 

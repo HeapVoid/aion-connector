@@ -24,7 +24,7 @@ export def registerRoutes server, connector
 		try
 			const curr = await connector.adapter.readSkills!
 			const skillsPayload = curr.skills.map do(s) { name: s.name, content: s.content }
-			const out = await connector.adapter.writeSkills({ persona: body.content, skills: skillsPayload })
+			const out = await connector.adapter.writeSkills({ persona: body.content, expected_persona_hash: body.expected_prev_hash, skills: skillsPayload })
 			{ status: 200, body: { persona: out.persona } }
 		catch e
 			if e.constructor and e.constructor.name == 'ConflictError'
