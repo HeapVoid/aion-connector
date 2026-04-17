@@ -9,6 +9,8 @@ import {AionClient} from './aion-client.imba'
 import {makeAdapter} from './adapter.imba'
 import {Connector, CONNECTOR_VERSION} from './connector.imba'
 
+const _fetch = globalThis.fetch.bind(globalThis)
+
 def parseFlags argv
 	const out = {}
 	let i = 0
@@ -161,6 +163,50 @@ def cmdStop
 	const r = await exec(['systemctl', '--user', 'stop', 'aion-connector.service'])
 	process.exit(r.exitCode)
 
+def cmdDoctor
+	const st = stateMod.readState()
+	if !st
+		console.error("FAIL: no workspace state")
+		process.exit(1)
+	let ok = yes
+	# AION reachability
+	try
+		const res = await _fetch("{st.aion_url}/api/workspaces/{st.workspace_id}/heartbeat",
+			{
+				method: 'POST'
+				headers: { 'content-type': 'application/json', 'authorization': "Bearer {st.workspace_token}" }
+				body: JSON.stringify({ external_ip: process.env.AION_EXTERNAL_IP or '0.0.0.0', coordinator_status: { state: 'starting' }, connector_version: CONNECTOR_VERSION, timestamp: Date.now() })
+			}
+		)
+		const aionTag = if res.status == 200 then 'OK' else "FAIL {res.status}"
+		console.log("aion reach:    {aionTag}")
+		ok = ok and res.status == 200
+	catch e
+		console.log("aion reach:    FAIL ({e.message})")
+		ok = no
+	# TLS cert fingerprint
+	try
+		const fp = await tls.fingerprint(stateMod.certPath())
+		const match = fp == st.cert_fingerprint
+		const certTag = if match then 'OK' else 'FAIL (pin mismatch)'
+		console.log("tls cert:      {certTag}")
+		ok = ok and match
+	catch e
+		console.log("tls cert:      FAIL ({e.message})")
+		ok = no
+	# Adapter health
+	try
+		const home = process.env.HOME or homedir()
+		const adapter = makeAdapter(st.coordinator.program, home)
+		const h = await adapter.health()
+		const adapterTag = if h.state == 'ready' then 'OK' else "FAIL {h.detail or h.state}"
+		console.log("coordinator:   {adapterTag}")
+		ok = ok and h.state == 'ready'
+	catch e
+		console.log("coordinator:   FAIL ({e.message})")
+		ok = no
+	process.exit(ok ? 0 : 1)
+
 # Dispatcher runs after all defs are declared.
 const sub = process.argv[2]
 if sub === 'run'
@@ -175,5 +221,7 @@ elif sub === 'restart'
 	await cmdRestart(parseFlags(process.argv.slice(3)))
 elif sub === 'stop'
 	await cmdStop()
+elif sub === 'doctor'
+	await cmdDoctor()
 else
 	usage()
