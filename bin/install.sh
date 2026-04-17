@@ -43,17 +43,30 @@ command -v npm >/dev/null || { echo "npm required"; exit 1; }
 SLUG="${WORKSPACE_ID:-$(openssl rand -hex 3)}"
 USER="aion-$SLUG"
 USER_HOME="/home/$USER"
+CREATED_USER=0
 echo "-- provisioning user $USER --"
 if ! id "$USER" >/dev/null 2>&1; then
   useradd -m -d "$USER_HOME" -s /bin/bash "$USER"
+  CREATED_USER=1
 fi
 
-# Rollback helper
+# Rollback helper. Only stops the unit via the user's own systemctl (machinectl
+# `-M user@` requires systemd-container which is absent on many stock VPS images).
+# Only deletes the user if we created it this run — a pre-existing workspace
+# must survive a failed re-enroll with its $HOME intact.
 rollback() {
   echo "!! install failed — rolling back"
-  systemctl --user -M "$USER@" stop aion-connector.service 2>/dev/null || true
-  systemctl --user -M "$USER@" disable aion-connector.service 2>/dev/null || true
-  userdel -r "$USER" 2>/dev/null || true
+  if id "$USER" >/dev/null 2>&1; then
+    local UID_N
+    UID_N="$(id -u "$USER")"
+    sudo -u "$USER" -H XDG_RUNTIME_DIR="/run/user/$UID_N" \
+      systemctl --user stop aion-connector.service 2>/dev/null || true
+    sudo -u "$USER" -H XDG_RUNTIME_DIR="/run/user/$UID_N" \
+      systemctl --user disable aion-connector.service 2>/dev/null || true
+  fi
+  if [ "$CREATED_USER" = "1" ]; then
+    userdel -r "$USER" 2>/dev/null || true
+  fi
   exit 1
 }
 trap rollback ERR
