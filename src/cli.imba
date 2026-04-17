@@ -1,2 +1,128 @@
-# Rewritten in Phase 1 — see docs/superpowers/plans/2026-04-17-workspace-registration.md
-throw new Error("TODO: rewritten in Phase 1")
+import {readFileSync, existsSync} from 'fs'
+import {homedir} from 'os'
+import {log, error} from './utils.imba'
+import * as stateMod from './state.imba'
+import * as tls from './tls.imba'
+import * as portMod from './port.imba'
+import {AionClient} from './aion-client.imba'
+import {makeAdapter} from './adapter.imba'
+import {Connector, CONNECTOR_VERSION} from './connector.imba'
+
+def parseFlags argv
+	const out = {}
+	let i = 0
+	while i < argv.length
+		const a = argv[i]
+		if a.startsWith('--')
+			const key = a.slice(2)
+			const next = argv[i + 1]
+			if next !== undefined and !next.startsWith('--')
+				out[key] = next
+				i = i + 2
+			else
+				out[key] = 'true'
+				i = i + 1
+		else
+			i = i + 1
+	out
+
+def usage
+	console.error("Usage: aion-connector <command> [flags]")
+	console.error("")
+	console.error("Commands:")
+	console.error("  run                 Start the connector service (used by systemd)")
+	console.error("  install --token X --aion URL --program P --model M --auth-mode api_key|oauth")
+	console.error("                      [--workspace-id ID] [--port N] [--persona FILE] [--skills-json FILE]")
+	console.error("                      [--api-key VALUE] [--external-ip IP]")
+	console.error("  status | logs | restart | stop | doctor | uninstall")
+	process.exit(2)
+
+def cmdRun
+	const state = stateMod.readState()
+	unless state
+		error("no workspace state found — run `aion-connector install` first")
+		process.exit(1)
+	const c = new Connector(state)
+	await c.start()
+	const shutdown = do
+		log("shutting down...")
+		await c.stop()
+		process.exit(0)
+	process.on('SIGTERM', shutdown)
+	process.on('SIGINT', shutdown)
+
+def cmdInstall f
+	const required = ['token', 'aion', 'program', 'model', 'auth-mode']
+	let ri = 0
+	while ri < required.length
+		const k = required[ri]
+		unless f[k]
+			error("--{k} is required")
+			process.exit(2)
+		ri = ri + 1
+	stateMod.ensureDirs()
+	log("generating TLS cert...")
+	const fp = await tls.generateSelfSigned(stateMod.certPath(), stateMod.keyPath())
+	let port = null
+	if f.port
+		port = parseInt(f.port)
+	else
+		port = await portMod.pickFreePort()
+	log("chose port {port}, fingerprint {fp}")
+
+	let persona = ''
+	if f.persona and existsSync(f.persona)
+		persona = readFileSync(f.persona, 'utf8')
+	let skills = []
+	if f['skills-json'] and existsSync(f['skills-json'])
+		skills = JSON.parse(readFileSync(f['skills-json'], 'utf8'))
+
+	log("configuring coordinator ({f.program}, {f.model})...")
+	const home = process.env.HOME or homedir()
+	const adapter = makeAdapter(f.program, home)
+	await adapter.installCoordinator({ program: f.program })
+	let creds = null
+	if f['auth-mode'] === 'api_key'
+		creds = { api_key: f['api-key'] or '' }
+	await adapter.configure({
+		model: f.model
+		credentials: creds
+		persona: persona
+		skills: skills
+	})
+	await adapter.start()
+	const health = await adapter.health()
+
+	log("registering with AION...")
+	const cli = new AionClient(f.aion)
+	const reg = await cli.register({
+		enrollment_token: f.token
+		external_ip: f['external-ip'] or process.env.AION_EXTERNAL_IP or '0.0.0.0'
+		port: port
+		cert_fingerprint: fp
+		coordinator_status: { state: health.state, program: f.program, version: f.model }
+		connector_version: CONNECTOR_VERSION
+	})
+
+	stateMod.writeState({
+		workspace_id: reg.workspace_id
+		workspace_token: reg.workspace_token
+		aion_url: f.aion
+		port: port
+		cert_fingerprint: fp
+		coordinator: {
+			program: f.program
+			model: f.model
+			auth_mode: f['auth-mode']
+		}
+	})
+	console.log("READY workspace_id={reg.workspace_id} port={port} fingerprint={fp}")
+
+# Dispatcher runs after all defs are declared.
+const sub = process.argv[2]
+if sub === 'run'
+	await cmdRun()
+elif sub === 'install'
+	await cmdInstall(parseFlags(process.argv.slice(3)))
+else
+	usage()
