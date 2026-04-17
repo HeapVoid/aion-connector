@@ -34,12 +34,23 @@ export class ClaudeCodeAdapter
 			sync.writeFile(sync.personaPath(home), opts.persona)
 		if opts.skills !== undefined
 			sync.writeSkills(home, opts.skills)
-		if opts.credentials !== undefined and opts.credentials.api_key
+		if opts.credentials and opts.credentials.api_key
 			const envPath = path.join(sync.coordinatorDir(home), 'credentials.env')
 			fs.writeFileSync(envPath, "ANTHROPIC_API_KEY={opts.credentials.api_key}\n")
 			fs.chmodSync(envPath, 0o600)
-		const cfg = { program: 'claude-code', model: opts.model }
-		fs.writeFileSync(path.join(sync.coordinatorDir(home), 'config.json'), JSON.stringify(cfg, null, 2))
+		# Partial updates (e.g. persona-only) must not wipe the model. Read current
+		# config and merge: explicit opts.model wins, otherwise keep what's on disk.
+		const configPath = path.join(sync.coordinatorDir(home), 'config.json')
+		let currentModel = null
+		if fs.existsSync(configPath)
+			try
+				const cur = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+				currentModel = cur.model
+			catch e
+				currentModel = null
+		const model = opts.model !== undefined ? opts.model : currentModel
+		const cfg = { program: 'claude-code', model: model }
+		fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2))
 
 	def start
 		return

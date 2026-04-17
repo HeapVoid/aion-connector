@@ -21,6 +21,19 @@ test "configure writes persona.md + skills/*", do
 	expect(statSync(envPath).mode & 0o777).toBe(0o600)
 	expect(readFileSync(envPath, 'utf8')).toContain('sk-xxx')
 
+test "partial configure preserves existing model in config.json", do
+	const a = new ClaudeCodeAdapter(home)
+	await a.configure({ persona: 'v1', skills: [], model: 'sonnet-4.6', credentials: null })
+	const cfgPath = join(home, 'coordinator', 'config.json')
+	expect(JSON.parse(readFileSync(cfgPath, 'utf8')).model).toBe('sonnet-4.6')
+	# Partial update: only persona changes. Model must NOT get wiped.
+	await a.configure({ persona: 'v2' })
+	expect(JSON.parse(readFileSync(cfgPath, 'utf8')).model).toBe('sonnet-4.6')
+	expect(readFileSync(personaPath(home), 'utf8')).toBe('v2')
+	# Explicit model change: new value wins.
+	await a.configure({ model: 'opus-4' })
+	expect(JSON.parse(readFileSync(cfgPath, 'utf8')).model).toBe('opus-4')
+
 const runOrSkip = SKIP ? test.skip : test
 runOrSkip "health returns ready when binary is present", do
 	const a = new ClaudeCodeAdapter(home)
