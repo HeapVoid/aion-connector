@@ -1,5 +1,5 @@
-import {exec, sha256Hex} from './utils.imba'
-import {writeFileSync, readFileSync, chmodSync, mkdirSync, existsSync} from 'fs'
+import {exec} from './utils.imba'
+import {readFileSync, chmodSync, mkdirSync} from 'fs'
 import {dirname} from 'path'
 
 # Generate a self-signed RSA 2048 cert valid 10 years for CN=aion-connector.
