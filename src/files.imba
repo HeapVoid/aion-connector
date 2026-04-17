@@ -1,5 +1,5 @@
-import {resolve, relative} from 'path'
-import {existsSync, readFileSync, statSync} from 'fs'
+import {resolve, relative, dirname} from 'path'
+import {existsSync, readFileSync, writeFileSync, statSync, mkdirSync} from 'fs'
 import {sanitize, denied, exec} from './utils.imba'
 
 export class Files
@@ -78,6 +78,18 @@ export class Files
 			args.push("--", ...payload.paths)
 		const out = await git(dir, ...args)
 		{ diff: out }
+
+	def write payload
+		const dir = #repos.resolve(payload.workspace)
+		return { error: "no workspace" } unless dir
+		if denied(payload.path)
+			return { error: "denied" }
+		const abs = sanitize(dir, payload.path)
+		const parent = dirname(abs)
+		unless existsSync(parent)
+			mkdirSync(parent, recursive: yes)
+		writeFileSync(abs, payload.content, 'utf8')
+		{ ok: yes, path: payload.path }
 
 	def git dir, ...args
 		const result = await exec(["git", ...args], cwd: dir)

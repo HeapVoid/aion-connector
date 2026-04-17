@@ -12,12 +12,21 @@ const MCP_SERVER = resolve(__dir, 'mcp-server.cjs')
 const IDLE_TIMEOUT = 30 * 1000 # 30 seconds
 
 const runningProcs = new Map!
+# One agent at a time per chat (dir + agentName)
+const chatRunning = new Map! # "dir:agentName" → sid
+
+def killTree proc
+	try
+		# Kill entire process group (acpx + queue-owner + claude-agent-acp + claude)
+		process.kill(-proc.pid, 'SIGKILL')
+	catch
+		try proc.kill('SIGKILL')
 
 export def stopAgent sid
 	log "stopping agent session: {sid}"
 	const entry = runningProcs.get(sid)
 	if entry
-		try entry.proc.kill!
+		killTree(entry.proc)
 		runningProcs.delete(sid)
 
 export def shutdownAllAgents
@@ -26,7 +35,7 @@ export def shutdownAllAgents
 	log "shutting down {runningProcs.size} running agent(s)..."
 	const promises = []
 	for [sid, entry] of runningProcs
-		try entry.proc.kill!
+		killTree(entry.proc)
 		if entry.payload
 			promises.push(sendCallback(entry.payload, "error", sessionId: sid, error: "Connector shutting down"))
 		runningProcs.delete(sid)
@@ -112,6 +121,14 @@ export class Agent
 			await send(payload, "error", sessionId: sid, error: "no agent specified")
 			return
 
+		# Kill previous agent for this chat (one at a time per dir+agent)
+		const lockKey = "{dir}:{name}"
+		const prevSid = chatRunning.get(lockKey)
+		if prevSid and prevSid != sid
+			log "killing previous agent {prevSid} for {lockKey}"
+			stopAgent(prevSid)
+
+		chatRunning.set(lockKey, sid)
 		setupMcp(ws, payload, sid)
 		try
 			log "invoking {name} (session {sid}) in {dir}"
@@ -175,11 +192,17 @@ export class Agent
 			err "invoke crashed: {e.message}"
 			runningProcs.delete(sid)
 			await send(payload, "error", sessionId: sid, error: "connector error: {e.message}")
+		finally
+			# Release chat lock
+			const lk = "{dir}:{name}"
+			if chatRunning.get(lk) == sid
+				chatRunning.delete(lk)
 
 	def runProc args, dir, sid, payload
 		const proc = spawn(args[0], args.slice(1), {
 			cwd: dir
 			stdio: ['pipe', 'pipe', 'pipe']
+			detached: yes
 		})
 		runningProcs.set(sid, { proc, payload })
 

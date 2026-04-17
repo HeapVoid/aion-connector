@@ -91,6 +91,9 @@ export class Server
 			when "files.read"
 				const files = #connector.filesFor(pid)
 				respond(res, files ? await files.read(p) : { error: "no workspace" })
+			when "files.write"
+				const files = #connector.filesFor(pid)
+				respond(res, files ? await files.write(p) : { error: "no workspace" })
 			when "git.status"
 				const files = #connector.filesFor(pid)
 				respond(res, files ? await files.status(p) : { error: "no workspace" })
