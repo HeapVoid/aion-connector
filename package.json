@@ -12,7 +12,7 @@
 	],
 	"scripts": {
 		"build": "bunx bimba src/cli.imba --outdir dist --target node --external node-pty --external ws",
-		"build:tests": "bunx bimba tests/smoke.test.imba --outdir tests-dist --target node --external node-pty --external ws",
+		"build:tests": "sh -c 'for f in tests/*.test.imba; do bunx bimba \"$f\" --outdir tests-dist --target node --external node-pty --external ws; done'",
 		"test": "bun run build:tests && bun test tests-dist"
 	},
 	"dependencies": {
