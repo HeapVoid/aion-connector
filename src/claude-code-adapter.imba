@@ -2,6 +2,7 @@ import * as utils from './utils.imba'
 import * as sync from './sync.imba'
 import * as fs from 'fs'
 import * as path from 'path'
+import * as cp from 'child_process'
 
 # Wraps the real `claude` CLI. claude-code is invoked per-turn via acpx, not as a daemon —
 # so start/stop/restart are mostly no-ops; health() just probes the binary.
@@ -58,10 +59,39 @@ export class ClaudeCodeAdapter
 		{ state: 'ready' }
 
 	def startAuth
-		throw new Error("startAuth not implemented yet")
+		const env = Object.assign({}, process.env, { HOME: self.home })
+		const proc = cp.spawn('claude', ['setup-token'], { stdio: ['pipe', 'pipe', 'pipe'], env: env })
+		self.authProc = proc
+		let stdout = ''
+		return new Promise do(ok, ko)
+			let resolved = no
+			const urlRegex = /(https?:\/\/\S+)/
+			proc.stdout.on 'data', do(chunk)
+				stdout += chunk.toString!
+				const m = stdout.match(urlRegex)
+				if m and !resolved
+					resolved = yes
+					ok({ url: m[1] })
+			proc.on 'exit', do(code)
+				unless resolved
+					resolved = yes
+					ko(new Error("claude setup-token exited {code} before URL appeared"))
 
 	def submitAuthCode opts
-		throw new Error("submitAuthCode not implemented yet")
+		unless self.authProc
+			return { status: 'error', error: 'no auth in progress — call startAuth first' }
+		const proc = self.authProc
+		const self2 = self
+		proc.stdin.write("{opts.code}\n")
+		proc.stdin.end!
+		return new Promise do(ok)
+			proc.on 'exit', do(ec)
+				self2.authProc = null
+				if ec == 0
+					self2.authorized = yes
+					ok({ status: 'authorized' })
+				else
+					ok({ status: 'error', error: "claude setup-token exited {ec}" })
 
 	def writeSkills opts
 		const personaHash = sync.writeFile(sync.personaPath(home), opts.persona)

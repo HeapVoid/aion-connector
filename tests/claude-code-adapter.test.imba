@@ -27,3 +27,10 @@ runOrSkip "health returns ready when binary is present", do
 	await a.installCoordinator({ program: 'claude-code' })
 	const h = await a.health!
 	expect(h.state).toBe('ready')
+
+const runOrSkipAuth = SKIP ? test.skip : test
+runOrSkipAuth "startAuth surfaces an auth URL", 20000, do
+	const a = new ClaudeCodeAdapter(home)
+	const r = await a.startAuth!
+	expect(r.url).toMatch(/^https?:/)
+	a.authProc..kill!
