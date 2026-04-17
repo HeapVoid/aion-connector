@@ -1,4 +1,5 @@
-import {readFileSync, existsSync} from 'fs'
+import {readFileSync, existsSync, rmSync, unlinkSync} from 'fs'
+import {join} from 'path'
 import {homedir} from 'os'
 import {spawn} from 'child_process'
 import {log, error, exec} from './utils.imba'
@@ -207,6 +208,32 @@ def cmdDoctor
 		ok = no
 	process.exit(ok ? 0 : 1)
 
+def cmdUninstall
+	const st = stateMod.readState()
+	if st
+		try
+			await _fetch("{st.aion_url}/api/workspaces/{st.workspace_id}", {
+				method: 'DELETE'
+				headers: { 'authorization': "Bearer {st.workspace_token}" }
+			})
+		catch e
+			console.error("warning: failed to notify AION: {e.message}")
+	const home = process.env.HOME or homedir()
+	try
+		await exec(['systemctl', '--user', 'stop', 'aion-connector.service'])
+	catch e
+		yes
+	try
+		await exec(['systemctl', '--user', 'disable', 'aion-connector.service'])
+	catch e
+		yes
+	const unit = join(home, '.config', 'systemd', 'user', 'aion-connector.service')
+	if existsSync(unit)
+		unlinkSync(unit)
+	rmSync(stateMod.stateDir(), { recursive: yes, force: yes })
+	rmSync(join(home, 'coordinator'), { recursive: yes, force: yes })
+	console.log("uninstalled — re-run installer with --workspace-id to re-enroll")
+
 # Dispatcher runs after all defs are declared.
 const sub = process.argv[2]
 if sub === 'run'
@@ -223,5 +250,7 @@ elif sub === 'stop'
 	await cmdStop()
 elif sub === 'doctor'
 	await cmdDoctor()
+elif sub === 'uninstall'
+	await cmdUninstall()
 else
 	usage()
