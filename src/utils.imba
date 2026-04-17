@@ -1,16 +1,6 @@
-import {resolve} from 'path'
 import {spawn} from 'child_process'
-
-const DENY = [".env", ".git", ".pem", ".key", "credentials", ".secret"]
-
-export def sanitize dir, rel
-	const abs = resolve(dir, rel)
-	unless abs.startsWith(dir)
-		throw new Error("path traversal")
-	abs
-
-export def denied path
-	DENY.some do(p) path.includes(p)
+import {createHash} from 'crypto'
+import {chmodSync} from 'fs'
 
 export def log ...args
 	console.log("[aion-connector]", ...args)
@@ -18,7 +8,7 @@ export def log ...args
 export def error ...args
 	console.error("[aion-connector]", ...args)
 
-# Spawn a process, collect stdout/stderr, return {stdout, stderr, exitCode}
+# Spawn, collect stdout/stderr, return {stdout, stderr, exitCode}
 export def exec args, opts = {}
 	new Promise do(ok)
 		const proc = spawn(args[0], args.slice(1), { ...opts, stdio: ['pipe', 'pipe', 'pipe'] })
@@ -29,3 +19,9 @@ export def exec args, opts = {}
 		proc.on('close', do(code)
 			ok({ stdout, stderr, exitCode: code })
 		)
+
+export def sha256Hex buf
+	createHash('sha256').update(buf).digest('hex')
+
+export def ensureMode path, mode
+	chmodSync(path, mode)
