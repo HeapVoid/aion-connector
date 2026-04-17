@@ -10,12 +10,13 @@ export def error ...args
 
 # Spawn, collect stdout/stderr, return {stdout, stderr, exitCode}
 export def exec args, opts = {}
-	new Promise do(ok)
+	new Promise do(ok, fail)
 		const proc = spawn(args[0], args.slice(1), { ...opts, stdio: ['pipe', 'pipe', 'pipe'] })
 		let stdout = ''
 		let stderr = ''
 		proc.stdout.on('data', do(chunk) stdout += chunk.toString!)
 		proc.stderr.on('data', do(chunk) stderr += chunk.toString!)
+		proc.on('error', do(err) fail(err))
 		proc.on('close', do(code)
 			ok({ stdout, stderr, exitCode: code })
 		)

@@ -1,6 +1,7 @@
 import {readFileSync, existsSync} from 'fs'
 import {homedir} from 'os'
-import {log, error} from './utils.imba'
+import {spawn} from 'child_process'
+import {log, error, exec} from './utils.imba'
 import * as stateMod from './state.imba'
 import * as tls from './tls.imba'
 import * as portMod from './port.imba'
@@ -50,6 +51,10 @@ def cmdRun
 		process.exit(0)
 	process.on('SIGTERM', shutdown)
 	process.on('SIGINT', shutdown)
+	process.on('SIGHUP', do
+		log("SIGHUP — restarting coordinator")
+		c.adapter..restart()
+	)
 
 def cmdInstall f
 	const required = ['token', 'aion', 'program', 'model', 'auth-mode']
@@ -118,11 +123,57 @@ def cmdInstall f
 	})
 	console.log("READY workspace_id={reg.workspace_id} port={port} fingerprint={fp}")
 
+def cmdStatus
+	const st = stateMod.readState()
+	unless st
+		console.error("no workspace state")
+		process.exit(1)
+	console.log("workspace_id: {st.workspace_id}")
+	console.log("aion_url:     {st.aion_url}")
+	console.log("port:         {st.port}")
+	console.log("coordinator:  {st.coordinator.program} ({st.coordinator.model})")
+	console.log("fingerprint:  {st.cert_fingerprint}")
+	try
+		const s = await exec(['systemctl', '--user', 'is-active', 'aion-connector.service'])
+		console.log("unit active:  {s.stdout.trim() or s.stderr.trim()}")
+	catch e
+		console.log("unit active:  (systemctl unavailable: {e.message})")
+
+def cmdLogs flags
+	const n = flags.n or '100'
+	const p = spawn('journalctl', ['--user', '-u', 'aion-connector.service', '-n', n, '-f'], { stdio: 'inherit' })
+	p.on('close', do(code) process.exit(code))
+
+def pidOfRun
+	const r = await exec(['systemctl', '--user', 'show', 'aion-connector.service', '--property=MainPID', '--value'])
+	parseInt(r.stdout.trim()) or 0
+
+def cmdRestart flags
+	if flags.coordinator
+		const pid = await pidOfRun()
+		if pid > 0
+			process.kill(pid, 'SIGHUP')
+		return
+	const r = await exec(['systemctl', '--user', 'restart', 'aion-connector.service'])
+	process.exit(r.exitCode)
+
+def cmdStop
+	const r = await exec(['systemctl', '--user', 'stop', 'aion-connector.service'])
+	process.exit(r.exitCode)
+
 # Dispatcher runs after all defs are declared.
 const sub = process.argv[2]
 if sub === 'run'
 	await cmdRun()
 elif sub === 'install'
 	await cmdInstall(parseFlags(process.argv.slice(3)))
+elif sub === 'status'
+	await cmdStatus()
+elif sub === 'logs'
+	await cmdLogs(parseFlags(process.argv.slice(3)))
+elif sub === 'restart'
+	await cmdRestart(parseFlags(process.argv.slice(3)))
+elif sub === 'stop'
+	await cmdStop()
 else
 	usage()
