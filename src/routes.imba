@@ -47,3 +47,21 @@ export def registerRoutes server, connector
 			if e.constructor and e.constructor.name == 'ConflictError'
 				return { status: 409, body: { error: 'conflict', actualHash: e.actualHash } }
 			{ status: 500, body: { error: e.message } }
+
+	server.route 'POST', '/coordinator/update', do(params, body)
+		body = body or {}
+		try
+			if body.model !== undefined or body.persona !== undefined or body.skills !== undefined or body.credentials !== undefined
+				const curr = await connector.adapter.readSkills!
+				const personaContent = body.persona !== undefined ? body.persona : ((curr.persona and curr.persona.content) or '')
+				const skillsContent = body.skills !== undefined ? body.skills : curr.skills.map(do(s) { name: s.name, content: s.content })
+				await connector.adapter.configure({
+					model: body.model
+					persona: personaContent
+					skills: skillsContent
+					credentials: body.credentials
+				})
+				await connector.adapter.restart!
+			{ status: 200, body: { status: 'updated' } }
+		catch e
+			{ status: 500, body: { status: 'error', error: e.message } }
