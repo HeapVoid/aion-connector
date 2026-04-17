@@ -14,6 +14,7 @@
 
 import * as sync from './sync.imba'
 import {mkdirSync} from 'fs'
+import {ClaudeCodeAdapter} from './claude-code-adapter.imba'
 
 export class StubAdapter
 	home = null
@@ -62,7 +63,7 @@ export class StubAdapter
 		const s = sync.listSkills(home)
 		{ persona: p, skills: s }
 
-const registry = { stub: StubAdapter }
+const registry = { stub: StubAdapter, 'claude-code': ClaudeCodeAdapter }
 
 export def registerAdapter name, cls
 	registry[name] = cls
