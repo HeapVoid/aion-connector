@@ -112,6 +112,14 @@ def cmdInstall f
 		connector_version: CONNECTOR_VERSION
 	})
 
+	# Re-enroll safety: if the admin explicitly passed --workspace-id, AION must
+	# have returned the same id (the enrollment token binds the workspace server-side).
+	# Mismatch means the admin pasted the wrong id or used a token from a different
+	# workspace — fail loudly rather than silently enrolling into a different record.
+	if f['workspace-id'] and reg.workspace_id !== f['workspace-id']
+		error("workspace-id mismatch: expected {f['workspace-id']}, AION returned {reg.workspace_id}")
+		process.exit(1)
+
 	stateMod.writeState({
 		workspace_id: reg.workspace_id
 		workspace_token: reg.workspace_token
