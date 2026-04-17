@@ -8,11 +8,10 @@
 	},
 	"files": [
 		"dist/",
-		"aion.config.example.json",
 		"README.md"
 	],
 	"scripts": {
-		"build": "bunx bimba src/cli.imba --outdir dist --target node --external node-pty --external ws && cp src/mcp-server.cjs dist/"
+		"build": "bunx bimba src/cli.imba --outdir dist --target node --external node-pty --external ws"
 	},
 	"dependencies": {
 		"node-pty": "^1.0.0",
