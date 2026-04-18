@@ -32,6 +32,16 @@ for v in TOKEN AION PROGRAM MODEL AUTH_MODE; do
   [ -n "${!v}" ] || { echo "missing --${v,,}"; exit 2; }
 done
 
+# api_key mode requires --api-key; oauth mode doesn't (cli.imba handles both branches)
+if [ "$AUTH_MODE" = "api_key" ] && [ -z "$API_KEY" ]; then
+  echo "missing --api-key (required when --auth-mode=api_key)"
+  exit 2
+fi
+if [ "$AUTH_MODE" != "api_key" ] && [ "$AUTH_MODE" != "oauth" ]; then
+  echo "--auth-mode must be api_key or oauth"
+  exit 2
+fi
+
 # --- preflight ---
 echo "-- preflight --"
 command -v openssl >/dev/null || { echo "openssl required"; exit 1; }
