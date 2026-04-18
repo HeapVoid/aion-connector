@@ -33,3 +33,22 @@
 - Submitting a bogus code → modal shows error; workspace state unchanged
 - `AION_INTERNAL_TOKEN` missing on aion-server side → 500 surfaced in modal
 - Connector offline at time of Authorize → modal shows timeout error (10s)
+
+## Production rollout
+
+1. `openssl rand -hex 32 > /tmp/tok`
+2. Set `AION_INTERNAL_TOKEN=$(cat /tmp/tok)` in both the PB process env and the
+   aion-server env (e.g. `/etc/systemd/system/aion-server.service.d/env.conf`
+   + PB's `pb_data/.env`). MUST be the same value in both services.
+3. `systemctl restart aion-pocketbase aion-server` (or equivalent)
+4. Verify:
+   ```
+   curl -sf http://127.0.0.1:8787/internal/oauth/start \
+     -X POST -d '{}' -H 'content-type: application/json'
+   ```
+   → 401 (token missing). Then add `-H 'X-Internal-Token: <tok>'` and
+   `-d '{"workspace_id":"nonexistent"}'` → 500 with "workspace not found".
+5. Run `oauth-smoke.md` happy path against staging.
+6. Enable oauth option in production by shipping the aion-application build
+   (no UI feature flag — the option appears by default in the create modal).
+
