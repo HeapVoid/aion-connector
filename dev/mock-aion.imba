@@ -79,10 +79,12 @@ export class MockAion
 		ws.connector_version = connector_version
 		ws.coordinator_status = coordinator_status
 		ws.workspace_token = token
+		const aionToken = randomBytes(32).toString('hex')
+		ws.aion_token = aionToken
 		ws.state = coordinator_status..state == 'ready' ? 'online' : 'provisioning'
 		ws.updatedAt = Date.now!
 		workspaceTokens.set(token, id)
-		json(res, 200, { workspace_id: id, workspace_token: token })
+		json(res, 200, { workspace_id: id, workspace_token: token, aion_token: aionToken })
 
 	def handleHeartbeat id, payload, headers, res
 		const auth = headers['authorization'] or ''

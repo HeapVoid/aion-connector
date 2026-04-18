@@ -123,6 +123,7 @@ def cmdInstall f
 	stateMod.writeState({
 		workspace_id: reg.workspace_id
 		workspace_token: reg.workspace_token
+		aion_token: reg.aion_token
 		aion_url: f.aion
 		port: port
 		cert_fingerprint: fp

@@ -57,3 +57,25 @@ test "heartbeat requires workspace_token", do
 		connector_version: '0.4.0'
 	})
 	expect(aion.heartbeats.length).toBe(1)
+
+# Spec §2.3: register response now includes aion_token alongside
+# workspace_token. AionClient.register must pass it through verbatim
+# (no key filtering) so cli.imba can persist it.
+#
+# Deviates from plan's stub-fetch approach: aion-client.imba captures
+# `const _fetch = globalThis.fetch.bind(globalThis)` at module load,
+# so stubbing globalThis.fetch at test time has no effect. MockAion
+# was extended to emit aion_token instead.
+test "register passes through aion_token from PB response", do
+	const ws = aion.createWorkspace!
+	const cli = new AionClient(aion.baseUrl)
+	const r = await cli.register({
+		enrollment_token: ws.enrollment_token
+		external_ip: '1.2.3.4'
+		port: 7700
+		cert_fingerprint: '0'.repeat(64)
+		coordinator_status: { state: 'ready' }
+		connector_version: '0.4.0'
+	})
+	expect(typeof r.aion_token).toBe('string')
+	expect(r.aion_token.length).toBe(64)
