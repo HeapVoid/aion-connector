@@ -1828,9 +1828,15 @@ cd /Users/fedor/Projects/aion/aion-application && grep -rn "agent_sessions\|slas
 ```
 Expected: zero matches in both.
 
+> **Interpretation (2026-04-17):** Matches confined to `aion-pocketbase/public/_migrations/**` are expected and acceptable — migration history must continue to reference collections it originally created/dropped. What must be zero is any reference in live hook/api code (`src/`, `public/*.pb.js`, `public/workspace-auth.js`). Audit result: aion-application clean (0 matches); aion-pocketbase live code clean (0 matches); `_migrations/**` matches present by design.
+
 - [ ] **Step 8: Mark plan complete**
 
 Commit a final plan-complete marker if desired, or simply declare done. No code change needed.
+
+---
+
+> **Phase 2 status (2026-04-18):** Code-complete. All 21 implementation tasks (1-21) shipped; Task 22 Step 7 (legacy audit) verified zero live-code hits; Steps 1-6 (live VPS acceptance) deferred to the deployment operator — they require a clean VPS, a real Anthropic API key, and human observation of the UI + systemd state transitions. A final cross-repo code review was run over the full Phase 2 commit range (aion-pocketbase `69e3fc6..aa45a19`, aion-application `2387aa4..934d494`) and returned one blocker, now fixed in aion-application `d02e549` (`db.collection` → `db.pb.collection` on the workspaces realtime subscribe path). Four non-blocking follow-ups (I1 required-field flags in migration 019, I2 global-vs-project slug uniqueness, I3 repo-wide `pbQuote()` retrofit, I4 client-side filter hardening) are tracked separately for the next cycle.
 
 ---
 
