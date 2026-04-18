@@ -36,6 +36,11 @@ export class Connector
 		adapter = adapterMod.makeAdapter(state.coordinator.program, home)
 		externalIp = await self.detectIp()
 		aionClient = new aionMod.AionClient(state.aion_url, state.workspace_token)
+		# Divergence from spec §6.5 / plan Task 15: the aion_token persists
+		# in the state JSON (written by cli.imba#register, Task 8) rather
+		# than a separate /etc/aion-connector/aion-token file. Simpler:
+		# state JSON already lives in $HOME with 600 perms owned by the
+		# service user; no root-owned etc path to sync permissions with.
 		server = new serverMod.Server({ port: state.port, cert: ck.cert, key: ck.key, aionToken: state.aion_token })
 		routesMod.registerRoutes(server, self)
 		await server.start()

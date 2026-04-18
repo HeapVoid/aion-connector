@@ -49,6 +49,14 @@ command -v systemctl >/dev/null || { echo "systemd required"; exit 1; }
 command -v node >/dev/null || { echo "node required"; exit 1; }
 command -v npm >/dev/null || { echo "npm required"; exit 1; }
 
+# Ensure @anthropic-ai/claude-code is installed globally — required for
+# `claude setup-token` (oauth mode) and for api_key invocation. npm is
+# already guaranteed by the node check above; no-op if claude present.
+if ! command -v claude >/dev/null 2>&1; then
+  echo "-- installing @anthropic-ai/claude-code --"
+  npm install -g @anthropic-ai/claude-code
+fi
+
 # --- user ---
 SLUG="${WORKSPACE_ID:-$(openssl rand -hex 3)}"
 USER="aion-$SLUG"
