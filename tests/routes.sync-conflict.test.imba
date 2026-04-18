@@ -23,7 +23,7 @@ beforeEach do
 	await generateSelfSigned(certP, keyP)
 	const { cert, key } = loadCertKey(certP, keyP)
 	port = 19800 + Math.floor(Math.random! * 200)
-	server = new Server({ port, cert, key, workspaceToken: token })
+	server = new Server({ port, cert, key, aionToken: token })
 	const adapter = new StubAdapter(home)
 	await adapter.configure({ persona: 'v1', skills: [], model: 'm', credentials: null })
 	registerRoutes(server, { adapter })

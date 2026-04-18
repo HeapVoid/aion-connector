@@ -16,7 +16,7 @@ beforeEach do
 	await generateSelfSigned(certPath, keyPath)
 	const ck = loadCertKey(certPath, keyPath)
 	port = 19100 + Math.floor(Math.random! * 500)
-	server = new Server({ port: port, cert: ck.cert, key: ck.key, workspaceToken: token })
+	server = new Server({ port: port, cert: ck.cert, key: ck.key, aionToken: token })
 	await server.start!
 
 afterEach do

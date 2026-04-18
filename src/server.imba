@@ -10,7 +10,7 @@ export class Server
 	port = 0
 	cert = null
 	key = null
-	workspaceToken = null
+	aionToken = null
 	routes = []
 	srv = null
 
@@ -18,7 +18,7 @@ export class Server
 		self.port = opts.port
 		self.cert = opts.cert
 		self.key = opts.key
-		self.workspaceToken = opts.workspaceToken
+		self.aionToken = opts.aionToken
 		self.host = opts.host or '0.0.0.0'
 
 	def route method, path, handler
@@ -52,7 +52,7 @@ export class Server
 		try
 			const auth = req.headers['authorization'] or ''
 			const tok = auth.replace(/^Bearer /, '')
-			unless tok and tok === workspaceToken
+			unless tok and tok === aionToken
 				return self.reply(res, 403, { error: 'unauthorized' })
 
 			let body = null

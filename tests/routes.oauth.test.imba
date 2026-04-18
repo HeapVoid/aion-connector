@@ -20,7 +20,7 @@ beforeEach do
 	await generateSelfSigned(certP, keyP)
 	const { cert, key } = loadCertKey(certP, keyP)
 	port = 19400 + Math.floor(Math.random! * 200)
-	server = new Server({ port, cert, key, workspaceToken: token })
+	server = new Server({ port, cert, key, aionToken: token })
 	const adapter = new StubAdapter(dir)
 	adapter.startAuth = do
 		return { url: 'https://provider.example/oauth?session=abc' }

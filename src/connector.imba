@@ -36,7 +36,7 @@ export class Connector
 		adapter = adapterMod.makeAdapter(state.coordinator.program, home)
 		externalIp = await self.detectIp()
 		aionClient = new aionMod.AionClient(state.aion_url, state.workspace_token)
-		server = new serverMod.Server({ port: state.port, cert: ck.cert, key: ck.key, workspaceToken: state.workspace_token })
+		server = new serverMod.Server({ port: state.port, cert: ck.cert, key: ck.key, aionToken: state.aion_token })
 		routesMod.registerRoutes(server, self)
 		await server.start()
 		log("server up on :{state.port}")
