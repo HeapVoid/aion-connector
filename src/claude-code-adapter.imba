@@ -63,10 +63,36 @@ export class ClaudeCodeAdapter
 
 	def health
 		unless installed
-			const which = await utils.exec(['which', 'claude'])
-			installed = which.exitCode == 0
+			try
+				const which = await utils.exec(['which', 'claude'])
+				installed = which.exitCode == 0
+			catch e
+				# `which` itself may be unresolvable (eg. tests with a
+				# mangled PATH, stripped container image). Treat as
+				# claude_missing rather than propagating to the caller.
+				installed = no
 		unless installed
-			return { state: 'error', detail: 'claude binary not found' }
+			return { state: 'error', detail: 'claude_missing' }
+
+		# Peek at credentials.json without spawning a subprocess or
+		# hitting the network. Health probes run on every heartbeat
+		# (~30s cadence), so this must stay cheap.
+		#
+		# Threshold: refuse if expires_at < now+60s — treat
+		# "about to expire" as already-expired so the UI CTA lights
+		# up before the first call-time failure.
+		const credsPath = path.join(self.home, '.claude', 'credentials.json')
+		unless fs.existsSync(credsPath)
+			return { state: 'error', detail: 'not_authorized' }
+
+		try
+			const raw = fs.readFileSync(credsPath, 'utf8')
+			const creds = JSON.parse(raw)
+			if creds.expires_at and creds.expires_at < Date.now! + 60_000
+				return { state: 'error', detail: 'not_authorized' }
+		catch e
+			return { state: 'error', detail: 'creds_corrupt' }
+
 		{ state: 'ready' }
 
 	def startAuth
